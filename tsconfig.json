@@ -67,6 +67,7 @@
     "node_modules/**/*",
     "packages/_/devkit/**/*files/**/*",
     "packages/schematics/*/*/*files/**/*",
+    "packages/crexi_dev/*/*/*files/**/*",
     "tmp/**/*",
     "scripts/patches/**/*",
     "tests/**/*",

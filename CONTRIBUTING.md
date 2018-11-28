@@ -215,6 +215,7 @@ The following is the list of supported scopes:
 * **@angular-devkit/core**
 * **@angular-devkit/schematics**
 * **@angular-devkit/schematics-cli**
+* **crexi-dev/schematics**
 * **@ngtools/webpack**
 * **@schematics/angular**
 * **@schematics/schematics**

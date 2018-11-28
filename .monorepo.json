@@ -203,6 +203,12 @@
       "section": "Schematics",
       "hash": "f19a525d59e859922020dc75ec22ec0f",
       "snapshotRepo": "angular/schematics-update-builds"
+    },
+    "@crexi-dev/schematics": {
+        "name": "CREXi Schematics",
+        "section": "crexi-dev",
+        "version": "7.1.0",
+        "hash": "415e700a4b37e4c7bbc39215ccada542"
     }
   }
 }
