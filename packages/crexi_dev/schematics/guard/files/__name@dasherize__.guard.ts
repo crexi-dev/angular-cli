@@ -3,12 +3,16 @@ import { CanActivate, ActivatedRouteSnapshot, RouterStateSnapshot } from '@angul
 import { Observable } from 'rxjs';
 
 @Injectable({
-  providedIn: 'root'
+    providedIn: 'root'
 })
 export class <%= classify(name) %>Guard implements CanActivate {
-  canActivate(
-    next: ActivatedRouteSnapshot,
-    state: RouterStateSnapshot): Observable<boolean> | Promise<boolean> | boolean {
-    return true;
-  }
+
+    canActivate(
+        next: ActivatedRouteSnapshot, state: RouterStateSnapshot
+    ): Observable<boolean> | Promise<boolean> | boolean {
+
+        return true;
+
+    }
+
 }
