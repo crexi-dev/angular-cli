@@ -5,13 +5,13 @@ import { Component, OnInit<% if(!!viewEncapsulation) { %>, ViewEncapsulation<% }
     encapsulation: ViewEncapsulation.<%= viewEncapsulation %>,<% } %>
     selector: '<%= selector %>',<% if(inlineStyle) { %>
     styles: [],<% } else { %>
-    styleUrls: ['./<%= dasherize(name) %>.component.<%= styleext %>'],<% } if(inlineTemplate) { %>
+    styleUrls: ['./<%= dasherize(name) %>.<%= styleext %>'],<% } if(inlineTemplate) { %>
     template: `
         <p>
             <%= dasherize(name) %> works!
         </p>
     `<% } else { %>
-    templateUrl: './<%= dasherize(name) %>.component.pug'<% } %>
+    templateUrl: './<%= dasherize(name) %>.pug'<% } %>
 })
 export class <%= classify(name) %>Component implements OnInit {
 
