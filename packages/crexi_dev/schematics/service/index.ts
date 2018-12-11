@@ -41,6 +41,7 @@ export default function (options: ServiceOptions): Rule {
 
     const templateSource = apply(url('./files'), [
       options.spec ? noop() : filter(path => !path.endsWith('.spec.ts')),
+      options.spec ? noop() : filter(path => !path.endsWith('.stub.ts')),
       template({
         ...strings,
         'if-flat': (s: string) => options.flat ? '' : s,

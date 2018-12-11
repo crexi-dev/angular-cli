@@ -20,7 +20,8 @@ describe('<%= classify(name) %>Component', () => {
                 { provide: ComponentFixtureAutoDetect, useValue: true }
             ]
         })
-        .compileComponents().then(() => {
+        .compileComponents()
+        .then(() => {
 
             fixture = TestBed.createComponent(<%= classify(name) %>Component);
             component = fixture.componentInstance;
