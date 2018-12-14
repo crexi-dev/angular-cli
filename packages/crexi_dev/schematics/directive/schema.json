@@ -58,8 +58,8 @@
     },
     "flat": {
       "type": "boolean",
-      "description": "When true (the default), creates the new files at the top level of the current project.",
-      "default": true
+      "description": "When true, creates the new files at the top level of the current project.",
+      "default": false
     },
     "module":  {
       "type": "string",
