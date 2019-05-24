@@ -5,164 +5,185 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-
-import {
-  BuildEvent,
-  Builder,
-  BuilderConfiguration,
-  BuilderContext,
-} from '@angular-devkit/architect';
-import { getSystemPath } from '@angular-devkit/core';
+import { BuilderContext, BuilderOutput, createBuilder } from '@angular-devkit/architect';
+import { json } from '@angular-devkit/core';
 import { readFileSync } from 'fs';
 import * as glob from 'glob';
 import { Minimatch } from 'minimatch';
 import * as path from 'path';
-import { Observable, from } from 'rxjs';
-import { concatMap } from 'rxjs/operators';
 import * as tslint from 'tslint'; // tslint:disable-line:no-implicit-dependencies
-import * as ts from 'typescript'; // tslint:disable-line:no-implicit-dependencies
+import { Program } from 'typescript';
 import { stripBom } from '../angular-cli-files/utilities/strip-bom';
+import { Schema as RealTslintBuilderOptions } from './schema';
 
-export interface TslintBuilderOptions {
-  tslintConfig?: string;
-  tsConfig?: string | string[];
-  fix: boolean;
-  typeCheck: boolean;
-  force: boolean;
-  silent: boolean;
-  format: string;
-  exclude: string[];
-  files: string[];
+
+type TslintBuilderOptions = RealTslintBuilderOptions & json.JsonObject;
+interface LintResult extends tslint.LintResult {
+  fileNames: string[];
 }
 
-export default class TslintBuilder implements Builder<TslintBuilderOptions> {
-
-  constructor(public context: BuilderContext) { }
-
-  private async loadTslint() {
-    let tslint;
-    try {
-      tslint = await import('tslint'); // tslint:disable-line:no-implicit-dependencies
-    } catch {
-      throw new Error('Unable to find TSLint. Ensure TSLint is installed.');
-    }
-
-    const version = tslint.Linter.VERSION && tslint.Linter.VERSION.split('.');
-    if (!version || version.length < 2 || Number(version[0]) < 5 || Number(version[1]) < 5) {
-      throw new Error('TSLint must be version 5.5 or higher.');
-    }
-
-    return tslint;
+async function _loadTslint() {
+  let tslint;
+  try {
+    tslint = await import('tslint'); // tslint:disable-line:no-implicit-dependencies
+  } catch {
+    throw new Error('Unable to find TSLint. Ensure TSLint is installed.');
   }
 
-  run(builderConfig: BuilderConfiguration<TslintBuilderOptions>): Observable<BuildEvent> {
+  const version = tslint.Linter.VERSION && tslint.Linter.VERSION.split('.');
+  if (!version || version.length < 2 || Number(version[0]) < 5 || Number(version[1]) < 5) {
+    throw new Error('TSLint must be version 5.5 or higher.');
+  }
 
-    const root = this.context.workspace.root;
-    const systemRoot = getSystemPath(root);
-    const options = builderConfig.options;
+  return tslint;
+}
 
-    if (!options.tsConfig && options.typeCheck) {
-      throw new Error('A "project" must be specified to enable type checking.');
-    }
 
-    return from(this.loadTslint()).pipe(concatMap(projectTslint => new Observable(obs => {
-      const tslintConfigPath = options.tslintConfig
-        ? path.resolve(systemRoot, options.tslintConfig)
-        : null;
-      const Linter = projectTslint.Linter;
+async function _run(
+  options: TslintBuilderOptions,
+  context: BuilderContext,
+): Promise<BuilderOutput> {
+  const systemRoot = context.workspaceRoot;
+  process.chdir(context.currentDirectory);
+  const projectName = (context.target && context.target.project) || '<???>';
 
-      let result: undefined | tslint.LintResult;
-      if (options.tsConfig) {
-        const tsConfigs = Array.isArray(options.tsConfig) ? options.tsConfig : [options.tsConfig];
+  // Print formatter output only for non human-readable formats.
+  const printInfo =
+    ['prose', 'verbose', 'stylish'].includes(options.format || '') && !options.silent;
 
-        for (const tsConfig of tsConfigs) {
-          const program = Linter.createProgram(path.resolve(systemRoot, tsConfig));
-          const partial = lint(projectTslint, systemRoot, tslintConfigPath, options, program);
-          if (result == undefined) {
-            result = partial;
-          } else {
-            result.failures = result.failures
-              .filter(curr => !partial.failures.some(prev => curr.equals(prev)))
-              .concat(partial.failures);
+  context.reportStatus(`Linting ${JSON.stringify(projectName)}...`);
+  if (printInfo) {
+    context.logger.info(`Linting ${JSON.stringify(projectName)}...`);
+  }
 
-            // we are not doing much with 'errorCount' and 'warningCount'
-            // apart from checking if they are greater than 0 thus no need to dedupe these.
-            result.errorCount += partial.errorCount;
-            result.warningCount += partial.warningCount;
+  if (!options.tsConfig && options.typeCheck) {
+    throw new Error('A "project" must be specified to enable type checking.');
+  }
 
-            if (partial.fixes) {
-              result.fixes = result.fixes ? result.fixes.concat(partial.fixes) : partial.fixes;
-            }
-          }
-        }
+  const projectTslint = await _loadTslint();
+  const tslintConfigPath = options.tslintConfig
+    ? path.resolve(systemRoot, options.tslintConfig)
+    : null;
+  const Linter = projectTslint.Linter;
+
+  let result: undefined | LintResult = undefined;
+  if (options.tsConfig) {
+    const tsConfigs = Array.isArray(options.tsConfig) ? options.tsConfig : [options.tsConfig];
+    context.reportProgress(0, tsConfigs.length);
+    const allPrograms = tsConfigs.map(tsConfig => {
+      return Linter.createProgram(path.resolve(systemRoot, tsConfig));
+    });
+
+    let i = 0;
+    for (const program of allPrograms) {
+      const partial = await _lint(
+        projectTslint,
+        systemRoot,
+        tslintConfigPath,
+        options,
+        program,
+        allPrograms,
+      );
+      if (result === undefined) {
+        result = partial;
       } else {
-        result = lint(projectTslint, systemRoot, tslintConfigPath, options);
-      }
+        result.failures = result.failures
+          .filter(curr => {
+            return !partial.failures.some(prev => curr.equals(prev));
+          })
+          .concat(partial.failures);
 
-      if (result == undefined) {
-        throw new Error('Invalid lint configuration. Nothing to lint.');
-      }
+        // we are not doing much with 'errorCount' and 'warningCount'
+        // apart from checking if they are greater than 0 thus no need to dedupe these.
+        result.errorCount += partial.errorCount;
+        result.warningCount += partial.warningCount;
+        result.fileNames = [...new Set([...result.fileNames, ...partial.fileNames])];
 
-      if (!options.silent) {
-        const Formatter = projectTslint.findFormatter(options.format);
-        if (!Formatter) {
-          throw new Error(`Invalid lint format "${options.format}".`);
-        }
-        const formatter = new Formatter();
-
-        const output = formatter.format(result.failures, result.fixes);
-        if (output) {
-          this.context.logger.info(output);
+        if (partial.fixes) {
+          result.fixes = result.fixes ? result.fixes.concat(partial.fixes) : partial.fixes;
         }
       }
 
-      // Print formatter output directly for non human-readable formats.
-      if (['prose', 'verbose', 'stylish'].indexOf(options.format) == -1) {
-        options.silent = true;
-      }
-
-      if (result.warningCount > 0 && !options.silent) {
-        this.context.logger.warn('Lint warnings found in the listed files.');
-      }
-
-      if (result.errorCount > 0 && !options.silent) {
-        this.context.logger.error('Lint errors found in the listed files.');
-      }
-
-      if (result.warningCount === 0 && result.errorCount === 0 && !options.silent) {
-        this.context.logger.info('All files pass linting.');
-      }
-
-      const success = options.force || result.errorCount === 0;
-      obs.next({ success });
-
-      return obs.complete();
-    })));
+      context.reportProgress(++i, allPrograms.length);
+    }
+  } else {
+    result = await _lint(projectTslint, systemRoot, tslintConfigPath, options);
   }
+
+  if (result == undefined) {
+    throw new Error('Invalid lint configuration. Nothing to lint.');
+  }
+
+  if (!options.silent) {
+    const Formatter = projectTslint.findFormatter(options.format || '');
+    if (!Formatter) {
+      throw new Error(`Invalid lint format "${options.format}".`);
+    }
+    const formatter = new Formatter();
+
+    const output = formatter.format(result.failures, result.fixes, result.fileNames);
+    if (output.trim()) {
+      context.logger.info(output);
+    }
+  }
+
+  if (result.warningCount > 0 && printInfo) {
+    context.logger.warn('Lint warnings found in the listed files.');
+  }
+
+  if (result.errorCount > 0 && printInfo) {
+    context.logger.error('Lint errors found in the listed files.');
+  }
+
+  if (result.warningCount === 0 && result.errorCount === 0 && printInfo) {
+    context.logger.info('All files pass linting.');
+  }
+
+  return {
+    success: options.force || result.errorCount === 0,
+  };
 }
 
-function lint(
+
+export default createBuilder<TslintBuilderOptions>(_run);
+
+
+async function _lint(
   projectTslint: typeof tslint,
   systemRoot: string,
   tslintConfigPath: string | null,
   options: TslintBuilderOptions,
-  program?: ts.Program,
-) {
+  program?: Program,
+  allPrograms?: Program[],
+): Promise<LintResult> {
   const Linter = projectTslint.Linter;
   const Configuration = projectTslint.Configuration;
 
   const files = getFilesToLint(systemRoot, options, Linter, program);
   const lintOptions = {
-    fix: options.fix,
+    fix: !!options.fix,
     formatter: options.format,
   };
 
   const linter = new Linter(lintOptions, program);
 
-  let lastDirectory;
+  let lastDirectory: string | undefined = undefined;
   let configLoad;
+  const lintedFiles: string[] = [];
   for (const file of files) {
-    const contents = getFileContents(file, options, program);
+    if (program && allPrograms) {
+      // If it cannot be found in ANY program, then this is an error.
+      if (allPrograms.every(p => p.getSourceFile(file) === undefined)) {
+        throw new Error(
+          `File ${JSON.stringify(file)} is not part of a TypeScript project '${options.tsConfig}'.`,
+        );
+      } else if (program.getSourceFile(file) === undefined) {
+        // The file exists in some other programs. We will lint it later (or earlier) in the loop.
+        continue;
+      }
+    }
+
+    const contents = getFileContents(file);
 
     // Only check for a new tslint config if the path changes.
     const currentDirectory = path.dirname(file);
@@ -171,24 +192,31 @@ function lint(
       lastDirectory = currentDirectory;
     }
 
-    if (contents && configLoad) {
+    if (configLoad) {
+      // Give some breathing space to other promises that might be waiting.
+      await Promise.resolve();
       linter.lint(file, contents, configLoad.results);
+      lintedFiles.push(file);
     }
   }
 
-  return linter.getResult();
+  return {
+    ...linter.getResult(),
+    fileNames: lintedFiles,
+  };
 }
 
 function getFilesToLint(
   root: string,
   options: TslintBuilderOptions,
   linter: typeof tslint.Linter,
-  program?: ts.Program,
+  program?: Program,
 ): string[] {
   const ignore = options.exclude;
+  const files = options.files || [];
 
-  if (options.files.length > 0) {
-    return options.files
+  if (files.length > 0) {
+    return files
       .map(file => glob.sync(file, { cwd: root, ignore, nodir: true }))
       .reduce((prev, curr) => prev.concat(curr), [])
       .map(file => path.join(root, file));
@@ -212,22 +240,7 @@ function getFilesToLint(
   return programFiles;
 }
 
-function getFileContents(
-  file: string,
-  options: TslintBuilderOptions,
-  program?: ts.Program,
-): string | undefined {
-  // The linter retrieves the SourceFile TS node directly if a program is used
-  if (program) {
-    if (program.getSourceFile(file) == undefined) {
-      const message = `File '${file}' is not part of the TypeScript project '${options.tsConfig}'.`;
-      throw new Error(message);
-    }
-
-    // TODO: this return had to be commented out otherwise no file would be linted, figure out why.
-    // return undefined;
-  }
-
+function getFileContents(file: string): string {
   // NOTE: The tslint CLI checks for and excludes MPEG transport streams; this does not.
   try {
     return stripBom(readFileSync(file, 'utf-8'));

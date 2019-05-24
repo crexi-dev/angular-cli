@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import * as path from 'path';
 import { packages } from '../lib/packages';
+import buildSchema from './build-schema';
 
 const minimatch = require('minimatch');
 const tar = require('tar');
@@ -200,41 +201,9 @@ async function _bazel(logger: logging.Logger) {
   // TODO: undo this when we fully support bazel on windows.
   // logger.info('Bazel build...');
   // _exec('bazel', ['build', '//packages/...'], {}, logger);
-
-  const allJsonFiles = glob.sync('packages/**/*.json', {
-    ignore: [
-      '**/node_modules/**',
-      '**/files/**',
-      '**/*-files/**',
-      '**/package.json',
-    ],
-  });
-
-  const quicktypeRunner = require('../tools/quicktype_runner');
-  logger.info('Generating JSON Schema....');
-
-  for (const fileName of allJsonFiles) {
-    if (fs.existsSync(fileName.replace(/\.json$/, '.ts'))
-        || fs.existsSync(fileName.replace(/\.json$/, '.d.ts'))) {
-      // Skip files that already exist.
-      continue;
-    }
-    const content = fs.readFileSync(fileName, 'utf-8');
-
-    const json = JSON.parse(content);
-    if (!json.$schema) {
-      // Skip non-schema files.
-      continue;
-    }
-    const tsContent = await quicktypeRunner.generate(fileName);
-    const tsPath = path.join(__dirname, '../dist-schema', fileName.replace(/\.json$/, '.ts'));
-
-    _mkdirp(path.dirname(tsPath));
-    fs.writeFileSync(tsPath, tsContent, 'utf-8');
-  }
 }
 
-
+// tslint:disable-next-line:no-big-function
 export default async function(
   argv: { local?: boolean, snapshot?: boolean },
   logger: logging.Logger,
@@ -243,6 +212,7 @@ export default async function(
 
   const sortedPackages = _sortPackages();
   await _bazel(logger);
+  await buildSchema({}, logger);
   _build(logger);
 
   logger.info('Moving packages to dist/');
@@ -398,9 +368,18 @@ export default async function(
 
     for (const depName of Object.keys(packages)) {
       const v = packages[depName].version;
-      for (const depKey of ['dependencies', 'peerDependencies', 'devDependencies']) {
-        const obj = packageJson[depKey] as JsonObject | null;
-        if (obj && obj[depName]) {
+      for (const depKey of ['dependencies', 'peerDependencies', 'devDependencies', 'ng-update']) {
+        let obj: JsonObject | null;
+        if (depKey === 'ng-update') {
+          const updateObject = packageJson[depKey] as JsonObject | null;
+          if (!updateObject) {
+            continue;
+          }
+          obj = updateObject['packageGroup'] as JsonObject | null;
+        } else {
+          obj = packageJson[depKey] as JsonObject | null;
+        }
+        if (obj && typeof obj === 'object' && obj[depName]) {
           if (argv.local) {
             obj[depName] = packages[depName].tar;
           } else if (argv.snapshot) {
@@ -428,8 +407,10 @@ export default async function(
   const tarLogger = logger.createChild('license');
   Object.keys(packages).forEach(pkgName => {
     const pkg = packages[pkgName];
-    tarLogger.info(`${pkgName} => ${pkg.tar}`);
-    _tar(pkg.tar, pkg.dist);
+    if (!pkg.private) {
+      tarLogger.info(`${pkgName} => ${pkg.tar}`);
+      _tar(pkg.tar, pkg.dist);
+    }
   });
 
   logger.info(`Done.`);

@@ -8,13 +8,16 @@
  */
 import { tags } from '@angular-devkit/core';
 import { HostTree } from '@angular-devkit/schematics';
-import * as ts from 'typescript';
+import * as ts from '../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 import { Change, InsertChange } from '../utility/change';
 import { getFileContent } from '../utility/test';
 import {
   addDeclarationToModule,
   addExportToModule,
+  addProviderToModule,
   addSymbolToNgModuleMetadata,
+  findNodes,
+  insertAfterLastOccurrence,
 } from './ast-utils';
 
 
@@ -36,6 +39,7 @@ function applyChanges(path: string, content: string, changes: Change[]): string 
   return getFileContent(tree, path);
 }
 
+// tslint:disable-next-line:no-big-function
 describe('ast utils', () => {
   let modulePath: string;
   let moduleContent: string;
@@ -165,6 +169,22 @@ describe('ast utils', () => {
     expect(output).toMatch(/imports: \[HelloWorld],\r?\n/m);
   });
 
+  it(`should handle NgModule with newline after '@'`, () => {
+    const moduleContent = `
+      import { BrowserModule } from '@angular/platform-browser';
+      import { NgModule } from '@angular/core';
+
+      @
+      NgModule({imports: [BrowserModule], declarations: []})
+      export class AppModule { }
+    `;
+    const source = getTsSource(modulePath, moduleContent);
+    const changes = addExportToModule(source, modulePath, 'FooComponent', './foo.component');
+    const output = applyChanges(modulePath, moduleContent, changes);
+    expect(output).toMatch(/import { FooComponent } from '.\/foo.component';/);
+    expect(output).toMatch(/exports: \[FooComponent\]/);
+  });
+
   it('should handle NgModule with no newlines', () => {
     const moduleContent = `
       import { BrowserModule } from '@angular/platform-browser';
@@ -178,5 +198,77 @@ describe('ast utils', () => {
     const output = applyChanges(modulePath, moduleContent, changes);
     expect(output).toMatch(/import { FooComponent } from '.\/foo.component';/);
     expect(output).toMatch(/exports: \[FooComponent\]/);
+  });
+
+  it('should add into providers metadata in new line ', () => {
+    const moduleContent = `
+      import { BrowserModule } from '@angular/platform-browser';
+      import { NgModule } from '@angular/core';
+
+      @NgModule({
+        imports: [BrowserModule],
+        declarations: [],
+        providers: [
+          {
+            provide: HTTP_INTERCEPTORS,
+            useClass: AuthInterceptor,
+            multi: true
+          }
+        ]
+      })
+      export class AppModule { }
+    `;
+    const source = getTsSource(modulePath, moduleContent);
+    const changes = addProviderToModule(source, modulePath, 'LogService', './log.service');
+    const output = applyChanges(modulePath, moduleContent, changes);
+    expect(output).toMatch(/import { LogService } from '.\/log.service';/);
+    expect(output).toMatch(/\},\r?\n\s*LogService\r?\n\s*\]/);
+  });
+
+  describe('insertAfterLastOccurrence', () => {
+    const filePath = './src/foo.ts';
+
+    it('should work for the default scenario', () => {
+      const fileContent = `const arr = ['foo'];`;
+      const source = getTsSource(filePath, fileContent);
+      const arrayNode = findNodes(
+        source.getChildren().shift() as ts.Node,
+        ts.SyntaxKind.ArrayLiteralExpression,
+      );
+      const elements = (arrayNode.pop() as ts.ArrayLiteralExpression).elements;
+
+      const change = insertAfterLastOccurrence(
+        elements as unknown as ts.Node[],
+        `, 'bar'`,
+        filePath,
+        elements.pos,
+        ts.SyntaxKind.StringLiteral,
+      );
+      const output = applyChanges(filePath, fileContent, [change]);
+
+      expect(output).toMatch(/const arr = \['foo', 'bar'\];/);
+    });
+
+
+    it('should work without occurrences', () => {
+      const fileContent = `const arr = [];`;
+      const source = getTsSource(filePath, fileContent);
+      const arrayNode = findNodes(
+        source.getChildren().shift() as ts.Node,
+        ts.SyntaxKind.ArrayLiteralExpression,
+      );
+      const elements = (arrayNode.pop() as ts.ArrayLiteralExpression).elements;
+
+      const change = insertAfterLastOccurrence(
+        elements as unknown as ts.Node[],
+        `'bar'`,
+        filePath,
+        elements.pos,
+        ts.SyntaxKind.StringLiteral,
+      );
+      const output = applyChanges(filePath, fileContent, [change]);
+
+      expect(output).toMatch(/const arr = \['bar'\];/);
+    });
   });
 });

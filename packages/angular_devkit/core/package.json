@@ -8,10 +8,10 @@
     "core"
   ],
   "dependencies": {
-    "ajv": "6.5.3",
-    "chokidar": "2.0.4",
+    "ajv": "6.10.0",
     "fast-json-stable-stringify": "2.0.0",
-    "rxjs": "6.3.3",
+    "magic-string": "0.25.2",
+    "rxjs": "6.4.0",
     "source-map": "0.7.3"
   },
   "devDependencies": {

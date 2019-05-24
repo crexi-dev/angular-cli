@@ -6,141 +6,27 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import {
-  BuildEvent,
-  Builder,
-  BuilderConfiguration,
   BuilderContext,
+  createBuilder,
+  targetFromTargetString,
 } from '@angular-devkit/architect';
-import { LoggingCallback, WebpackBuilder } from '@angular-devkit/build-webpack';
-import { Path, getSystemPath, normalize, resolve, virtualFs } from '@angular-devkit/core';
-import * as fs from 'fs';
+import { WebpackLoggingCallback, runWebpack } from '@angular-devkit/build-webpack';
+import { JsonObject } from '@angular-devkit/core';
 import * as path from 'path';
-import { Observable } from 'rxjs';
-import { concatMap, map } from 'rxjs/operators';
 import * as webpack from 'webpack';
-import { WebpackConfigOptions } from '../angular-cli-files/models/build-options';
 import {
   getAotConfig,
   getCommonConfig,
   getStatsConfig,
   getStylesConfig,
 } from '../angular-cli-files/models/webpack-configs';
-import { readTsconfig } from '../angular-cli-files/utilities/read-tsconfig';
 import { statsErrorsToString, statsWarningsToString } from '../angular-cli-files/utilities/stats';
-import { NormalizedBrowserBuilderSchema } from '../browser';
-import { BrowserBuilderSchema } from '../browser/schema';
-const webpackMerge = require('webpack-merge');
+import { Schema as BrowserBuilderOptions } from '../browser/schema';
+import { Version } from '../utils/version';
+import { generateBrowserWebpackConfigFromContext } from '../utils/webpack-browser-config';
+import { Schema as ExtractI18nBuilderOptions } from './schema';
 
-
-export interface ExtractI18nBuilderOptions {
-  browserTarget: string;
-  i18nFormat: string;
-  i18nLocale: string;
-  outputPath?: string;
-  outFile?: string;
-  progress?: boolean;
-}
-
-export class ExtractI18nBuilder implements Builder<ExtractI18nBuilderOptions> {
-
-  constructor(public context: BuilderContext) { }
-
-  run(builderConfig: BuilderConfiguration<ExtractI18nBuilderOptions>): Observable<BuildEvent> {
-    const architect = this.context.architect;
-    const options = builderConfig.options;
-    const root = this.context.workspace.root;
-    const projectRoot = resolve(root, builderConfig.root);
-    const [project, targetName, configuration] = options.browserTarget.split(':');
-    // Override browser build watch setting.
-    const overrides = { watch: false };
-
-    const browserTargetSpec = { project, target: targetName, configuration, overrides };
-    const browserBuilderConfig = architect.getBuilderConfiguration<BrowserBuilderSchema>(
-      browserTargetSpec);
-    const webpackBuilder = new WebpackBuilder(this.context);
-
-    const loggingCb: LoggingCallback = (stats, config, logger) => {
-      const json = stats.toJson();
-      if (stats.hasWarnings()) {
-        this.context.logger.warn(statsWarningsToString(json, config.stats));
-      }
-
-      if (stats.hasErrors()) {
-        this.context.logger.error(statsErrorsToString(json, config.stats));
-      }
-    };
-
-    return architect.getBuilderDescription(browserBuilderConfig).pipe(
-      concatMap(browserDescription =>
-        architect.validateBuilderOptions(browserBuilderConfig, browserDescription)),
-      map(browserBuilderConfig => browserBuilderConfig.options),
-      concatMap((validatedBrowserOptions) => {
-        const browserOptions = validatedBrowserOptions;
-
-        // We need to determine the outFile name so that AngularCompiler can retrieve it.
-        let outFile = options.outFile || getI18nOutfile(options.i18nFormat);
-        if (options.outputPath) {
-          // AngularCompilerPlugin doesn't support genDir so we have to adjust outFile instead.
-          outFile = path.join(options.outputPath, outFile);
-        }
-
-        // Extracting i18n uses the browser target webpack config with some specific options.
-        const webpackConfig = this.buildWebpackConfig(root, projectRoot, {
-          // todo: remove this casting when 'CurrentFileReplacement' is changed to 'FileReplacement'
-          ...(browserOptions as NormalizedBrowserBuilderSchema),
-          optimization: false,
-          i18nLocale: options.i18nLocale,
-          i18nFormat: options.i18nFormat,
-          i18nFile: outFile,
-          aot: true,
-          progress: options.progress,
-          assets: [],
-          scripts: [],
-          styles: [],
-        });
-
-        return webpackBuilder.runWebpack(webpackConfig, loggingCb);
-      }),
-    );
-  }
-
-  buildWebpackConfig(
-    root: Path,
-    projectRoot: Path,
-    options: NormalizedBrowserBuilderSchema,
-  ) {
-    let wco: WebpackConfigOptions;
-
-    const host = new virtualFs.AliasHost(this.context.host as virtualFs.Host<fs.Stats>);
-
-    const tsConfigPath = getSystemPath(normalize(resolve(root, normalize(options.tsConfig))));
-    const tsConfig = readTsconfig(tsConfigPath);
-
-    wco = {
-      root: getSystemPath(root),
-      logger: this.context.logger,
-      projectRoot: getSystemPath(projectRoot),
-      // TODO: use only this.options, it contains all flags and configs items already.
-      buildOptions: options,
-      tsConfig,
-      tsConfigPath,
-      supportES2015: false,
-    };
-
-    const webpackConfigs: {}[] = [
-      // We don't need to write to disk.
-      { plugins: [new InMemoryOutputPlugin()] },
-      getCommonConfig(wco),
-      getAotConfig(wco, host, true),
-      getStylesConfig(wco),
-      getStatsConfig(wco),
-    ];
-
-    return webpackMerge(webpackConfigs);
-  }
-}
-
-function getI18nOutfile(format: string) {
+function getI18nOutfile(format: string | undefined) {
   switch (format) {
     case 'xmb':
       return 'messages.xmb';
@@ -156,13 +42,69 @@ function getI18nOutfile(format: string) {
 }
 
 class InMemoryOutputPlugin {
-  constructor() { }
-
   apply(compiler: webpack.Compiler): void {
     // tslint:disable-next-line:no-any
     compiler.outputFileSystem = new (webpack as any).MemoryOutputFileSystem();
   }
-
 }
 
-export default ExtractI18nBuilder;
+async function execute(options: ExtractI18nBuilderOptions, context: BuilderContext) {
+  // Check Angular version.
+  Version.assertCompatibleAngularVersion(context.workspaceRoot);
+
+  const browserTarget = targetFromTargetString(options.browserTarget);
+  const browserOptions = await context.validateOptions<JsonObject & BrowserBuilderOptions>(
+    await context.getTargetOptions(browserTarget),
+    await context.getBuilderNameForTarget(browserTarget),
+  );
+
+  // We need to determine the outFile name so that AngularCompiler can retrieve it.
+  let outFile = options.outFile || getI18nOutfile(options.i18nFormat);
+  if (options.outputPath) {
+    // AngularCompilerPlugin doesn't support genDir so we have to adjust outFile instead.
+    outFile = path.join(options.outputPath, outFile);
+  }
+
+  const { config } = await generateBrowserWebpackConfigFromContext(
+    {
+      ...browserOptions,
+      optimization: {
+        scripts: false,
+        styles: false,
+      },
+      i18nLocale: options.i18nLocale,
+      i18nFormat: options.i18nFormat,
+      i18nFile: outFile,
+      aot: true,
+      progress: options.progress,
+      assets: [],
+      scripts: [],
+      styles: [],
+      deleteOutputPath: false,
+    },
+    context,
+    wco => [
+      { plugins: [new InMemoryOutputPlugin()] },
+      getCommonConfig(wco),
+      getAotConfig(wco, true),
+      getStylesConfig(wco),
+      getStatsConfig(wco),
+    ],
+  );
+
+  const logging: WebpackLoggingCallback = (stats, config) => {
+    const json = stats.toJson({ errors: true, warnings: true });
+
+    if (stats.hasWarnings()) {
+      context.logger.warn(statsWarningsToString(json, config.stats));
+    }
+
+    if (stats.hasErrors()) {
+      context.logger.error(statsErrorsToString(json, config.stats));
+    }
+  };
+
+  return runWebpack(config[0], context, { logging }).toPromise();
+}
+
+export default createBuilder<JsonObject & ExtractI18nBuilderOptions>(execute);

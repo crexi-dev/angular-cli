@@ -42,9 +42,13 @@ export default function () {
       <link rel="stylesheet" href="renamed-style.css">
     `))
     .then(() => expectFileToMatch('dist/test-project/index.html', oneLineTrim`
-      <script type="text/javascript" src="runtime.js"></script>
-      <script type="text/javascript" src="polyfills.js"></script>
-      <script type="text/javascript" src="vendor.js"></script>
-      <script type="text/javascript" src="main.js"></script>
+      <script src="runtime-es2015.js" type="module"></script>
+      <script src="polyfills-es2015.js" type="module"></script>
+      <script src="runtime-es5.js" nomodule></script>
+      <script src="polyfills-es5.js" nomodule></script>
+      <script src="vendor-es2015.js" type="module"></script>
+      <script src="main-es2015.js" type="module"></script>
+      <script src="vendor-es5.js" nomodule></script>
+      <script src="main-es5.js" nomodule></script>
     `));
 }

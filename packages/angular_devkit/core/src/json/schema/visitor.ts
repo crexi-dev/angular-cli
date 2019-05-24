@@ -5,20 +5,19 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { Observable, concat, from, of as observableOf } from 'rxjs';
+import { Observable, concat, from, isObservable, of as observableOf } from 'rxjs';
 import { concatMap, ignoreElements, mergeMap, tap } from 'rxjs/operators';
-import { isObservable } from '../../utils';
 import { JsonArray, JsonObject, JsonValue } from '../interface';
 import { JsonPointer, JsonSchemaVisitor, JsonVisitor } from './interface';
 import { buildJsonPointer, joinJsonPointer } from './pointer';
-
+import { JsonSchema } from './schema';
 
 export interface ReferenceResolver<ContextT> {
   (ref: string, context?: ContextT): { context?: ContextT, schema?: JsonObject };
 }
 
 function _getObjectSubSchema(
-  schema: JsonObject | undefined,
+  schema: JsonSchema | undefined,
   key: string,
 ): JsonObject | undefined {
   if (typeof schema !== 'object' || schema === null) {
@@ -50,11 +49,15 @@ function _visitJsonRecursive<ContextT>(
   json: JsonValue,
   visitor: JsonVisitor,
   ptr: JsonPointer,
-  schema?: JsonObject,
+  schema?: JsonSchema,
   refResolver?: ReferenceResolver<ContextT>,
   context?: ContextT,  // tslint:disable-line:no-any
   root?: JsonObject | JsonArray,
 ): Observable<JsonValue> {
+  if (schema === true || schema === false) {
+    // There's no schema definition, so just visit the JSON recursively.
+    schema = undefined;
+  }
   if (schema && schema.hasOwnProperty('$ref') && typeof schema['$ref'] == 'string') {
     if (refResolver) {
       const resolved = refResolver(schema['$ref'] as string, context);
@@ -65,11 +68,8 @@ function _visitJsonRecursive<ContextT>(
 
   const value = visitor(json, ptr, schema, root);
 
-  return (isObservable(value)
-      ? value as Observable<JsonValue>
-      : observableOf(value as JsonValue)
-  ).pipe(
-    concatMap((value: JsonValue) => {
+  return (isObservable<JsonValue>(value) ? value : observableOf(value)).pipe(
+    concatMap(value => {
       if (Array.isArray(value)) {
         return concat(
           from(value).pipe(
@@ -131,7 +131,7 @@ function _visitJsonRecursive<ContextT>(
 export function visitJson<ContextT>(
   json: JsonValue,
   visitor: JsonVisitor,
-  schema?: JsonObject,
+  schema?: JsonSchema,
   refResolver?: ReferenceResolver<ContextT>,
   context?: ContextT,  // tslint:disable-line:no-any
 ): Observable<JsonValue> {
@@ -139,7 +139,12 @@ export function visitJson<ContextT>(
 }
 
 
-export function visitJsonSchema(schema: JsonObject, visitor: JsonSchemaVisitor) {
+export function visitJsonSchema(schema: JsonSchema, visitor: JsonSchemaVisitor) {
+  if (schema === false || schema === true) {
+    // Nothing to visit.
+    return;
+  }
+
   const keywords = {
     additionalItems: true,
     items: true,

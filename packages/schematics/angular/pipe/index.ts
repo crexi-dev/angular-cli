@@ -11,22 +11,21 @@ import {
   SchematicsException,
   Tree,
   apply,
-  branchAndMerge,
+  applyTemplates,
   chain,
   filter,
   mergeWith,
   move,
   noop,
-  template,
   url,
 } from '@angular-devkit/schematics';
-import * as ts from 'typescript';
+import * as ts from '../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 import { addDeclarationToModule, addExportToModule } from '../utility/ast-utils';
 import { InsertChange } from '../utility/change';
 import { buildRelativePath, findModuleFromOptions } from '../utility/find-module';
 import { applyLintFix } from '../utility/lint-fix';
 import { parseName } from '../utility/parse-name';
-import { buildDefaultPath, getProject } from '../utility/project';
+import { createDefaultPath } from '../utility/workspace';
 import { Schema as PipeOptions } from './schema';
 
 
@@ -86,25 +85,23 @@ function addDeclarationToNgModule(options: PipeOptions): Rule {
 }
 
 export default function (options: PipeOptions): Rule {
-  return (host: Tree) => {
-    if (!options.project) {
-      throw new SchematicsException('Option (project) is required.');
-    }
-    const project = getProject(host, options.project);
-
+  return async (host: Tree) => {
     if (options.path === undefined) {
-      options.path = buildDefaultPath(project);
+      options.path = await createDefaultPath(host, options.project as string);
     }
+
+    options.module = findModuleFromOptions(host, options);
 
     const parsedPath = parseName(options.path, options.name);
     options.name = parsedPath.name;
     options.path = parsedPath.path;
 
-    options.module = findModuleFromOptions(host, options);
+    // todo remove these when we remove the deprecations
+    options.skipTests = options.skipTests || !options.spec;
 
     const templateSource = apply(url('./files'), [
-      options.spec ? noop() : filter(path => !path.endsWith('.spec.ts')),
-      template({
+      options.skipTests ? filter(path => !path.endsWith('.spec.ts.template')) : noop(),
+      applyTemplates({
         ...strings,
         'if-flat': (s: string) => options.flat ? '' : s,
         ...options,
@@ -112,12 +109,10 @@ export default function (options: PipeOptions): Rule {
       move(parsedPath.path),
     ]);
 
-    return branchAndMerge(
-      chain([
-        addDeclarationToNgModule(options),
-        mergeWith(templateSource),
-        options.lintFix ? applyLintFix(options.path) : noop(),
-      ]),
-    );
+    return chain([
+      addDeclarationToNgModule(options),
+      mergeWith(templateSource),
+      options.lintFix ? applyLintFix(options.path) : noop(),
+    ]);
   };
 }

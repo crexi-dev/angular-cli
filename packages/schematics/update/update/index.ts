@@ -32,21 +32,24 @@ type PeerVersionTransform = string | ((range: string) => string);
 // supports 6.0, by adding that compatibility to the range, so it is `^5.0.0 || ^6.0.0`.
 // We export it to allow for testing.
 export function angularMajorCompatGuarantee(range: string) {
-  range = semver.validRange(range);
+  let newRange = semver.validRange(range);
+  if (!newRange) {
+    return range;
+  }
   let major = 1;
-  while (!semver.gtr(major + '.0.0', range)) {
+  while (!semver.gtr(major + '.0.0', newRange)) {
     major++;
     if (major >= 99) {
       // Use original range if it supports a major this high
       // Range is most likely unbounded (e.g., >=5.0.0)
-      return range;
+      return newRange;
     }
   }
 
   // Add the major version as compatible with the angular compatible, with all minors. This is
   // already one major above the greatest supported, because we increment `major` before checking.
   // We add minors like this because a minor beta is still compatible with a minor non-beta.
-  let newRange = range;
+  newRange = range;
   for (let minor = 0; minor < 20; minor++) {
     newRange += ` || ^${major}.${minor}.0-alpha.0 `;
   }
@@ -76,7 +79,8 @@ interface PackageInfo {
 }
 
 interface UpdateMetadata {
-  packageGroup: string[];
+  packageGroupName?: string;
+  packageGroup: { [ packageName: string ]: string };
   requirements: { [packageName: string]: string };
   migrations?: string;
 }
@@ -88,9 +92,9 @@ function _updatePeerVersion(infoMap: Map<string, PackageInfo>, name: string, ran
     return range;
   }
   if (maybePackageInfo.target) {
-    name = maybePackageInfo.target.updateMetadata.packageGroup[0] || name;
+    name = maybePackageInfo.target.updateMetadata.packageGroupName || name;
   } else {
-    name = maybePackageInfo.installed.updateMetadata.packageGroup[0] || name;
+    name = maybePackageInfo.installed.updateMetadata.packageGroupName || name;
   }
 
   const maybeTransform = peerCompatibleWhitelist[name];
@@ -353,7 +357,7 @@ function _getUpdateMetadata(
   const metadata = packageJson['ng-update'];
 
   const result: UpdateMetadata = {
-    packageGroup: [],
+    packageGroup: {},
     requirements: {},
   };
 
@@ -363,15 +367,28 @@ function _getUpdateMetadata(
 
   if (metadata['packageGroup']) {
     const packageGroup = metadata['packageGroup'];
-    // Verify that packageGroup is an array of strings. This is not an error but we still warn
-    // the user and ignore the packageGroup keys.
-    if (!Array.isArray(packageGroup) || packageGroup.some(x => typeof x != 'string')) {
+    // Verify that packageGroup is an array of strings or an map of versions. This is not an error
+    // but we still warn the user and ignore the packageGroup keys.
+    if (Array.isArray(packageGroup) && packageGroup.every(x => typeof x == 'string')) {
+      result.packageGroup = packageGroup.reduce((group, name) => {
+        group[name] = packageJson.version;
+
+        return group;
+      }, result.packageGroup);
+    } else if (typeof packageGroup == 'object' && packageGroup
+               && Object.values(packageGroup).every(x => typeof x == 'string')) {
+      result.packageGroup = packageGroup;
+    } else {
       logger.warn(
         `packageGroup metadata of package ${packageJson.name} is malformed. Ignoring.`,
       );
-    } else {
-      result.packageGroup = packageGroup;
     }
+
+    result.packageGroupName = Object.keys(result.packageGroup)[0];
+  }
+
+  if (typeof metadata['packageGroupName'] == 'string') {
+    result.packageGroupName = metadata['packageGroupName'];
   }
 
   if (metadata['requirements']) {
@@ -511,7 +528,7 @@ function _buildPackageInfo(
 
   // Find out the currently installed version. Either from the package.json or the node_modules/
   // TODO: figure out a way to read package-lock.json and/or yarn.lock.
-  let installedVersion: string | undefined;
+  let installedVersion: string | undefined | null;
   const packageContent = tree.read(`/node_modules/${name}/package.json`);
   if (packageContent) {
     const content = JSON.parse(packageContent.toString()) as JsonSchemaForNpmPackageJsonFiles;
@@ -522,6 +539,12 @@ function _buildPackageInfo(
     installedVersion = semver.maxSatisfying(
       Object.keys(npmPackageJson.versions),
       packageJsonRange,
+    );
+  }
+
+  if (!installedVersion) {
+    throw new SchematicsException(
+      `An unexpected error happened; could not determine version for package ${name}.`,
     );
   }
 
@@ -654,22 +677,34 @@ function _addPackageGroup(
     return;
   }
 
-  const packageGroup = ngUpdateMetadata['packageGroup'];
+  let packageGroup = ngUpdateMetadata['packageGroup'];
   if (!packageGroup) {
     return;
   }
-  if (!Array.isArray(packageGroup) || packageGroup.some(x => typeof x != 'string')) {
+  if (Array.isArray(packageGroup) && !packageGroup.some(x => typeof x != 'string')) {
+    packageGroup = packageGroup.reduce((acc, curr) => {
+      acc[curr] = maybePackage;
+
+      return acc;
+    }, {} as { [name: string]: string });
+  }
+
+  // Only need to check if it's an object because we set it right the time before.
+  if (typeof packageGroup != 'object'
+      || packageGroup === null
+      || Object.values(packageGroup).some(v => typeof v != 'string')
+  ) {
     logger.warn(`packageGroup metadata of package ${npmPackageJson.name} is malformed.`);
 
     return;
   }
 
-  packageGroup
+  Object.keys(packageGroup)
     .filter(name => !packages.has(name))  // Don't override names from the command line.
     .filter(name => allDependencies.has(name))  // Remove packages that aren't installed.
     .forEach(name => {
-    packages.set(name, maybePackage);
-  });
+      packages.set(name, packageGroup[name]);
+    });
 }
 
 /**
@@ -783,7 +818,11 @@ export default function(options: UpdateSchema): Rule {
     return observableFrom([...allDependencies.keys()]).pipe(
       // Grab all package.json from the npm repository. This requires a lot of HTTP calls so we
       // try to parallelize as many as possible.
-      mergeMap(depName => getNpmPackageJson(depName, options.registry, logger, usingYarn)),
+      mergeMap(depName => getNpmPackageJson(
+        depName,
+        logger,
+        { registryUrl: options.registry, usingYarn, verbose: options.verbose },
+      )),
 
       // Build a map of all dependencies and their packageJson.
       reduce<NpmRepositoryPackageJson, Map<string, NpmRepositoryPackageJson>>(

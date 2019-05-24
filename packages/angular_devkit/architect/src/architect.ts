@@ -5,368 +5,385 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-
+import { analytics, experimental, json, logging } from '@angular-devkit/core';
+import { Observable, from, merge, of, onErrorResumeNext } from 'rxjs';
 import {
-  BaseException,
-  JsonObject,
-  JsonParseMode,
-  Path,
-  dirname,
-  experimental,
-  getSystemPath,
-  join,
-  logging,
-  normalize,
-  parseJson,
-  virtualFs,
-} from '@angular-devkit/core';
-import { resolve as nodeResolve } from '@angular-devkit/core/node';
-import { Observable, forkJoin, of, throwError } from 'rxjs';
-import { concatMap, map, tap } from 'rxjs/operators';
+  concatMap,
+  first,
+  ignoreElements,
+  last,
+  map,
+  shareReplay,
+  switchMap,
+  takeUntil,
+} from 'rxjs/operators';
+import {
+  BuilderInfo,
+  BuilderInput,
+  BuilderOutput,
+  BuilderRegistry,
+  BuilderRun,
+  Target,
+  targetStringFromTarget,
+} from './api';
+import { ArchitectHost, BuilderDescription, BuilderJobHandler } from './internal';
+import { scheduleByName, scheduleByTarget } from './schedule-by-name';
 
-export class ProjectNotFoundException extends BaseException {
-  constructor(projectName: string) {
-    super(`Project '${projectName}' could not be found in Workspace.`);
-  }
-}
+const inputSchema = require('./input-schema.json');
+const outputSchema = require('./output-schema.json');
 
-export class TargetNotFoundException extends BaseException {
-  constructor(projectName: string, targetName: string) {
-    super(`Target '${targetName}' could not be found in project '${projectName}'.`);
-  }
-}
+function _createJobHandlerFromBuilderInfo(
+  info: BuilderInfo,
+  target: Target | undefined,
+  host: ArchitectHost,
+  registry: json.schema.SchemaRegistry,
+  baseOptions: json.JsonObject,
+): Observable<BuilderJobHandler> {
+  const jobDescription: BuilderDescription = {
+    name: target ? `{${targetStringFromTarget(target)}}` : info.builderName,
+    argument: { type: 'object' },
+    input: inputSchema,
+    output: outputSchema,
+    info,
+  };
 
-export class ConfigurationNotFoundException extends BaseException {
-  constructor(projectName: string, configurationName: string) {
-    super(`Configuration '${configurationName}' could not be found in project '${projectName}'.`);
-  }
-}
-
-// TODO: break this exception apart into more granular ones.
-export class BuilderCannotBeResolvedException extends BaseException {
-  constructor(builder: string) {
-    super(`Builder '${builder}' cannot be resolved.`);
-  }
-}
-
-export class ArchitectNotYetLoadedException extends BaseException {
-  constructor() { super(`Architect needs to be loaded before Architect is used.`); }
-}
-
-export class BuilderNotFoundException extends BaseException {
-  constructor(builder: string) {
-    super(`Builder ${builder} could not be found.`);
-  }
-}
-
-export interface BuilderContext {
-  logger: logging.Logger;
-  host: virtualFs.Host<{}>;
-  workspace: experimental.workspace.Workspace;
-  architect: Architect;
-}
-
-// TODO: use Build Event Protocol
-// https://docs.bazel.build/versions/master/build-event-protocol.html
-// https://github.com/googleapis/googleapis/tree/master/google/devtools/build/v1
-export interface BuildEvent {
-  success: boolean;
-}
-
-export interface Builder<OptionsT> {
-  run(builderConfig: BuilderConfiguration<Partial<OptionsT>>): Observable<BuildEvent>;
-}
-
-export interface BuilderPathsMap {
-  builders: { [k: string]: BuilderPaths };
-}
-
-export interface BuilderPaths {
-  class: Path;
-  schema: Path;
-  description: string;
-}
-
-export interface BuilderDescription {
-  name: string;
-  schema: JsonObject;
-  description: string;
-}
-
-export interface BuilderConstructor<OptionsT> {
-  new(context: BuilderContext): Builder<OptionsT>;
-}
-
-export interface BuilderConfiguration<OptionsT = {}> {
-  root: Path;
-  sourceRoot?: Path;
-  projectType: string;
-  builder: string;
-  options: OptionsT;
-}
-
-export interface TargetSpecifier<OptionsT = {}> {
-  project: string;
-  target: string;
-  configuration?: string;
-  overrides?: Partial<OptionsT>;
-}
-
-export interface TargetMap {
-  [k: string]: Target;
-}
-
-export declare type TargetOptions<T = JsonObject> = T;
-export declare type TargetConfiguration<T = JsonObject> = Partial<T>;
-
-export interface Target<T = JsonObject> {
-  builder: string;
-  options: TargetOptions<T>;
-  configurations?: { [k: string]: TargetConfiguration<T> };
-}
-
-export class Architect {
-  private readonly _targetsSchemaPath = join(normalize(__dirname), 'targets-schema.json');
-  private readonly _buildersSchemaPath = join(normalize(__dirname), 'builders-schema.json');
-  private _targetsSchema: JsonObject;
-  private _buildersSchema: JsonObject;
-  private _architectSchemasLoaded = false;
-  private _targetMapMap = new Map<string, TargetMap>();
-  private _builderPathsMap = new Map<string, BuilderPaths>();
-  private _builderDescriptionMap = new Map<string, BuilderDescription>();
-  private _builderConstructorMap = new Map<string, BuilderConstructor<{}>>();
-
-  constructor(private _workspace: experimental.workspace.Workspace) { }
-
-  loadArchitect() {
-    if (this._architectSchemasLoaded) {
-      return of(this);
-    } else {
-      return forkJoin(
-        this._loadJsonFile(this._targetsSchemaPath),
-        this._loadJsonFile(this._buildersSchemaPath),
-      ).pipe(
-        concatMap(([targetsSchema, buildersSchema]) => {
-          this._targetsSchema = targetsSchema;
-          this._buildersSchema = buildersSchema;
-          this._architectSchemasLoaded = true;
-
-          // Validate and cache all project target maps.
-          return forkJoin(
-            ...this._workspace.listProjectNames().map(projectName => {
-              const unvalidatedTargetMap = this._workspace.getProjectTargets(projectName);
-
-              return this._workspace.validateAgainstSchema<TargetMap>(
-                unvalidatedTargetMap, this._targetsSchema).pipe(
-                  tap(targetMap => this._targetMapMap.set(projectName, targetMap)),
-              );
-            }),
-          );
-        }),
-        map(() => this),
-      );
-    }
-  }
-
-  listProjectTargets(projectName: string): string[] {
-    return Object.keys(this._getProjectTargetMap(projectName));
-  }
-
-  private _getProjectTargetMap(projectName: string): TargetMap {
-    if (!this._targetMapMap.has(projectName)) {
-      throw new ProjectNotFoundException(projectName);
-    }
-
-    return this._targetMapMap.get(projectName) as TargetMap;
-  }
-
-  private _getProjectTarget<T = {}>(projectName: string, targetName: string): Target<T> {
-    const targetMap = this._getProjectTargetMap(projectName);
-
-    const target = targetMap[targetName] as {} as Target<T>;
-
-    if (!target) {
-      throw new TargetNotFoundException(projectName, targetName);
-    }
-
-    return target;
-  }
-
-  getBuilderConfiguration<OptionsT>(targetSpec: TargetSpecifier): BuilderConfiguration<OptionsT> {
-    const {
-      project: projectName,
-      target: targetName,
-      configuration: configurationName,
-      overrides,
-    } = targetSpec;
-
-    const project = this._workspace.getProject(projectName);
-    const target = this._getProjectTarget(projectName, targetName);
-    const options = target.options;
-    let configuration: TargetConfiguration = {};
-
-    if (configurationName) {
-      if (!target.configurations) {
-        throw new ConfigurationNotFoundException(projectName, configurationName);
-      }
-
-      configuration = target.configurations[configurationName];
-
-      if (!configuration) {
-        throw new ConfigurationNotFoundException(projectName, configurationName);
-      }
-    }
-
-    const builderConfiguration: BuilderConfiguration<OptionsT> = {
-      root: project.root as Path,
-      sourceRoot: project.sourceRoot as Path | undefined,
-      projectType: project.projectType,
-      builder: target.builder,
-      options: {
-        ...options,
-        ...configuration,
-        ...overrides as {},
-      } as OptionsT,
-    };
-
-    return builderConfiguration;
-  }
-
-  run<OptionsT>(
-    builderConfig: BuilderConfiguration<OptionsT>,
-    partialContext: Partial<BuilderContext> = {},
-  ): Observable<BuildEvent> {
-    const context: BuilderContext = {
-      logger: new logging.NullLogger(),
-      architect: this,
-      host: this._workspace.host,
-      workspace: this._workspace,
-      ...partialContext,
-    };
-
-    let builderDescription: BuilderDescription;
-
-    return this.getBuilderDescription(builderConfig).pipe(
-      tap(description => builderDescription = description),
-      concatMap(() => this.validateBuilderOptions(builderConfig, builderDescription)),
-      tap(validatedBuilderConfig => builderConfig = validatedBuilderConfig),
-      map(() => this.getBuilder(builderDescription, context)),
-      concatMap(builder => builder.run(builderConfig)),
-    );
-  }
-
-  getBuilderDescription<OptionsT>(
-    builderConfig: BuilderConfiguration<OptionsT>,
-  ): Observable<BuilderDescription> {
-    // Check cache for this builder description.
-    if (this._builderDescriptionMap.has(builderConfig.builder)) {
-      return of(this._builderDescriptionMap.get(builderConfig.builder) as BuilderDescription);
-    }
-
-    return new Observable((obs) => {
-      // TODO: this probably needs to be more like NodeModulesEngineHost.
-      const basedir = getSystemPath(this._workspace.root);
-      const [pkg, builderName] = builderConfig.builder.split(':');
-      const pkgJsonPath = nodeResolve(pkg, { basedir, resolvePackageJson: true, checkLocal: true });
-      let buildersJsonPath: Path;
-      let builderPaths: BuilderPaths;
-
-      // Read the `builders` entry of package.json.
-      return this._loadJsonFile(normalize(pkgJsonPath)).pipe(
-        concatMap((pkgJson: JsonObject) => {
-          const pkgJsonBuildersentry = pkgJson['builders'] as string;
-          if (!pkgJsonBuildersentry) {
-            return throwError(new BuilderCannotBeResolvedException(builderConfig.builder));
-          }
-
-          buildersJsonPath = join(dirname(normalize(pkgJsonPath)), pkgJsonBuildersentry);
-
-          return this._loadJsonFile(buildersJsonPath);
-        }),
-        // Validate builders json.
-        concatMap((builderPathsMap) => this._workspace.validateAgainstSchema<BuilderPathsMap>(
-          builderPathsMap, this._buildersSchema)),
-        concatMap((builderPathsMap) => {
-          builderPaths = builderPathsMap.builders[builderName];
-
-          if (!builderPaths) {
-            return throwError(new BuilderCannotBeResolvedException(builderConfig.builder));
-          }
-
-          // Resolve paths in the builder paths.
-          const builderJsonDir = dirname(buildersJsonPath);
-          builderPaths.schema = join(builderJsonDir, builderPaths.schema);
-          builderPaths.class = join(builderJsonDir, builderPaths.class);
-
-          // Save the builder paths so that we can lazily load the builder.
-          this._builderPathsMap.set(builderConfig.builder, builderPaths);
-
-          // Load the schema.
-          return this._loadJsonFile(builderPaths.schema);
-        }),
-        map(builderSchema => {
-          const builderDescription = {
-            name: builderConfig.builder,
-            schema: builderSchema,
-            description: builderPaths.description,
+  function handler(argument: json.JsonObject, context: experimental.jobs.JobHandlerContext) {
+    // Add input validation to the inbound bus.
+    const inboundBusWithInputValidation = context.inboundBus.pipe(
+      concatMap(message => {
+        if (message.kind === experimental.jobs.JobInboundMessageKind.Input) {
+          const v = message.value as BuilderInput;
+          const options = {
+            ...baseOptions,
+            ...v.options,
           };
 
-          // Save to cache before returning.
-          this._builderDescriptionMap.set(builderDescription.name, builderDescription);
+          // Validate v against the options schema.
+          return registry.compile(info.optionSchema).pipe(
+            concatMap(validation => validation(options)),
+            map(({ data, success, errors }) => {
+              if (success) {
+                return { ...v, options: data } as BuilderInput;
+              }
 
-          return builderDescription;
-        }),
-      ).subscribe(obs);
-    });
-  }
-
-  validateBuilderOptions<OptionsT>(
-    builderConfig: BuilderConfiguration<OptionsT>, builderDescription: BuilderDescription,
-  ): Observable<BuilderConfiguration<OptionsT>> {
-    return this._workspace.validateAgainstSchema<OptionsT>(
-      builderConfig.options, builderDescription.schema,
-    ).pipe(
-      map(validatedOptions => {
-        builderConfig.options = validatedOptions;
-
-        return builderConfig;
+              throw new json.schema.SchemaValidationException(errors);
+            }),
+            map(value => ({ ...message, value })),
+          );
+        } else {
+          return of(message as experimental.jobs.JobInboundMessage<BuilderInput>);
+        }
       }),
+      // Using a share replay because the job might be synchronously sending input, but
+      // asynchronously listening to it.
+      shareReplay(1),
     );
+
+    // Make an inboundBus that completes instead of erroring out.
+    // We'll merge the errors into the output instead.
+    const inboundBus = onErrorResumeNext(inboundBusWithInputValidation);
+
+    const output = from(host.loadBuilder(info)).pipe(
+      concatMap(builder => {
+        if (builder === null) {
+          throw new Error(`Cannot load builder for builderInfo ${JSON.stringify(info, null, 2)}`);
+        }
+
+        return builder.handler(argument, { ...context, inboundBus }).pipe(
+          map(output => {
+            if (output.kind === experimental.jobs.JobOutboundMessageKind.Output) {
+              // Add target to it.
+              return {
+                ...output,
+                value: {
+                  ...output.value,
+                  ...target ? { target } : 0,
+                } as json.JsonObject,
+              };
+            } else {
+              return output;
+            }
+          }),
+        );
+      }),
+      // Share subscriptions to the output, otherwise the the handler will be re-run.
+      shareReplay(),
+    );
+
+    // Separate the errors from the inbound bus into their own observable that completes when the
+    // builder output does.
+    const inboundBusErrors = inboundBusWithInputValidation.pipe(
+      ignoreElements(),
+      takeUntil(onErrorResumeNext(output.pipe(last()))),
+    );
+
+    // Return the builder output plus any input errors.
+    return merge(inboundBusErrors, output);
   }
 
-  getBuilder<OptionsT>(
-    builderDescription: BuilderDescription, context: BuilderContext,
-  ): Builder<OptionsT> {
-    const name = builderDescription.name;
-    let builderConstructor: BuilderConstructor<OptionsT>;
+  return of(Object.assign(handler, { jobDescription }) as BuilderJobHandler);
+}
 
-    // Check cache for this builder.
-    if (this._builderConstructorMap.has(name)) {
-      builderConstructor = this._builderConstructorMap.get(name) as BuilderConstructor<OptionsT>;
-    } else {
-      if (!this._builderPathsMap.has(name)) {
-        throw new BuilderNotFoundException(name);
+export interface ScheduleOptions {
+  logger?: logging.Logger;
+  analytics?: analytics.Analytics;
+}
+
+
+/**
+ * A JobRegistry that resolves builder targets from the host.
+ */
+class ArchitectBuilderJobRegistry implements BuilderRegistry {
+  constructor(
+    protected _host: ArchitectHost,
+    protected _registry: json.schema.SchemaRegistry,
+    protected _jobCache?: Map<string, Observable<BuilderJobHandler | null>>,
+    protected _infoCache?: Map<string, Observable<BuilderInfo | null>>,
+  ) {}
+
+  protected _resolveBuilder(name: string): Observable<BuilderInfo | null> {
+    const cache = this._infoCache;
+    if (cache) {
+      const maybeCache = cache.get(name);
+      if (maybeCache !== undefined) {
+        return maybeCache;
       }
 
-      const builderPaths = this._builderPathsMap.get(name) as BuilderPaths;
+      const info = from(this._host.resolveBuilder(name)).pipe(
+        shareReplay(1),
+      );
+      cache.set(name, info);
 
-      // TODO: support more than the default export, maybe via builder#import-name.
-      const builderModule = require(getSystemPath(builderPaths.class));
-      builderConstructor = builderModule['default'] as BuilderConstructor<OptionsT>;
-
-      // Save builder to cache before returning.
-      this._builderConstructorMap.set(builderDescription.name, builderConstructor);
+      return info;
     }
 
-    const builder = new builderConstructor(context);
-
-    return builder;
+    return from(this._host.resolveBuilder(name));
   }
 
-  private _loadJsonFile(path: Path): Observable<JsonObject> {
-    return this._workspace.host.read(normalize(path)).pipe(
-      map(buffer => virtualFs.fileBufferToString(buffer)),
-      map(str => parseJson(str, JsonParseMode.Loose) as {} as JsonObject),
+  protected _createBuilder(
+    info: BuilderInfo,
+    target?: Target,
+    options?: json.JsonObject,
+  ): Observable<BuilderJobHandler | null> {
+    const cache = this._jobCache;
+    if (target) {
+      const maybeHit = cache && cache.get(targetStringFromTarget(target));
+      if (maybeHit) {
+        return maybeHit;
+      }
+    } else {
+      const maybeHit = cache && cache.get(info.builderName);
+      if (maybeHit) {
+        return maybeHit;
+      }
+    }
+
+    const result = _createJobHandlerFromBuilderInfo(
+      info,
+      target,
+      this._host,
+      this._registry,
+      options || {},
     );
+
+    if (cache) {
+      if (target) {
+        cache.set(targetStringFromTarget(target), result.pipe(shareReplay(1)));
+      } else {
+        cache.set(info.builderName, result.pipe(shareReplay(1)));
+      }
+    }
+
+    return result;
+  }
+
+  get<A extends json.JsonObject, I extends BuilderInput, O extends BuilderOutput>(
+    name: string,
+  ): Observable<experimental.jobs.JobHandler<A, I, O> | null> {
+    const m = name.match(/^([^:]+):([^:]+)$/i);
+    if (!m) {
+      return of(null);
+    }
+
+    return from(this._resolveBuilder(name)).pipe(
+      concatMap(builderInfo => (builderInfo ? this._createBuilder(builderInfo) : of(null))),
+      first(null, null),
+    ) as Observable<experimental.jobs.JobHandler<A, I, O> | null>;
+  }
+}
+
+/**
+ * A JobRegistry that resolves targets from the host.
+ */
+class ArchitectTargetJobRegistry extends ArchitectBuilderJobRegistry {
+  get<A extends json.JsonObject, I extends BuilderInput, O extends BuilderOutput>(
+    name: string,
+  ): Observable<experimental.jobs.JobHandler<A, I, O> | null> {
+    const m = name.match(/^{([^:]+):([^:]+)(?::([^:]*))?}$/i);
+    if (!m) {
+      return of(null);
+    }
+
+    const target = {
+      project: m[1],
+      target: m[2],
+      configuration: m[3],
+    };
+
+    return from(
+      Promise.all([
+        this._host.getBuilderNameForTarget(target),
+        this._host.getOptionsForTarget(target),
+      ]),
+    ).pipe(
+      concatMap(([builderStr, options]) => {
+        if (builderStr === null || options === null) {
+          return of(null);
+        }
+
+        return this._resolveBuilder(builderStr).pipe(
+          concatMap(builderInfo => {
+            if (builderInfo === null) {
+              return of(null);
+            }
+
+            return this._createBuilder(builderInfo, target, options);
+          }),
+        );
+      }),
+      first(null, null),
+    ) as Observable<experimental.jobs.JobHandler<A, I, O> | null>;
+  }
+}
+
+
+function _getTargetOptionsFactory(host: ArchitectHost) {
+  return experimental.jobs.createJobHandler<Target, json.JsonValue, json.JsonObject>(
+    target => {
+      return host.getOptionsForTarget(target).then(options => {
+        if (options === null) {
+          throw new Error(`Invalid target: ${JSON.stringify(target)}.`);
+        }
+
+        return options;
+      });
+    },
+    {
+      name: '..getTargetOptions',
+      output: { type: 'object' },
+      argument: inputSchema.properties.target,
+    },
+  );
+}
+
+function _getBuilderNameForTargetFactory(host: ArchitectHost) {
+  return experimental.jobs.createJobHandler<Target, never, string>(async target => {
+    const builderName = await host.getBuilderNameForTarget(target);
+    if (!builderName) {
+      throw new Error(`No builder were found for target ${targetStringFromTarget(target)}.`);
+    }
+
+    return builderName;
+  }, {
+    name: '..getBuilderNameForTarget',
+    output: { type: 'string' },
+    argument: inputSchema.properties.target,
+  });
+}
+
+function _validateOptionsFactory(host: ArchitectHost, registry: json.schema.SchemaRegistry) {
+  return experimental.jobs.createJobHandler<[string, json.JsonObject], never, json.JsonObject>(
+    async ([builderName, options]) => {
+      // Get option schema from the host.
+      const builderInfo = await host.resolveBuilder(builderName);
+      if (!builderInfo) {
+        throw new Error(`No builder info were found for builder ${JSON.stringify(builderName)}.`);
+      }
+
+      return registry.compile(builderInfo.optionSchema).pipe(
+        concatMap(validation => validation(options)),
+        switchMap(({ data, success, errors }) => {
+          if (success) {
+            return of(data as json.JsonObject);
+          }
+
+          throw new json.schema.SchemaValidationException(errors);
+        }),
+      ).toPromise();
+    },
+    {
+      name: '..validateOptions',
+      output: { type: 'object' },
+      argument: {
+        type: 'array',
+        items: [
+          { type: 'string' },
+          { type: 'object' },
+        ],
+      },
+    },
+  );
+}
+
+
+export class Architect {
+  private readonly _scheduler: experimental.jobs.Scheduler;
+  private readonly _jobCache = new Map<string, Observable<BuilderJobHandler>>();
+  private readonly _infoCache = new Map<string, Observable<BuilderInfo>>();
+
+  constructor(
+    private _host: ArchitectHost,
+    registry: json.schema.SchemaRegistry = new json.schema.CoreSchemaRegistry(),
+    additionalJobRegistry?: experimental.jobs.Registry,
+  ) {
+    const privateArchitectJobRegistry = new experimental.jobs.SimpleJobRegistry();
+    // Create private jobs.
+    privateArchitectJobRegistry.register(_getTargetOptionsFactory(_host));
+    privateArchitectJobRegistry.register(_getBuilderNameForTargetFactory(_host));
+    privateArchitectJobRegistry.register(_validateOptionsFactory(_host, registry));
+
+    const jobRegistry = new experimental.jobs.FallbackRegistry([
+      new ArchitectTargetJobRegistry(_host, registry, this._jobCache, this._infoCache),
+      new ArchitectBuilderJobRegistry(_host, registry, this._jobCache, this._infoCache),
+      privateArchitectJobRegistry,
+      ...(additionalJobRegistry ? [additionalJobRegistry] : []),
+    ] as experimental.jobs.Registry[]);
+
+    this._scheduler = new experimental.jobs.SimpleScheduler(jobRegistry, registry);
+  }
+
+  has(name: experimental.jobs.JobName) {
+    return this._scheduler.has(name);
+  }
+
+  scheduleBuilder(
+    name: string,
+    options: json.JsonObject,
+    scheduleOptions: ScheduleOptions = {},
+  ): Promise<BuilderRun> {
+    if (!/^[^:]+:[^:]+$/.test(name)) {
+      throw new Error('Invalid builder name: ' + JSON.stringify(name));
+    }
+
+    return scheduleByName(name, options, {
+      scheduler: this._scheduler,
+      logger: scheduleOptions.logger || new logging.NullLogger(),
+      currentDirectory: this._host.getCurrentDirectory(),
+      workspaceRoot: this._host.getWorkspaceRoot(),
+      analytics: scheduleOptions.analytics,
+    });
+  }
+  scheduleTarget(
+    target: Target,
+    overrides: json.JsonObject = {},
+    scheduleOptions: ScheduleOptions = {},
+  ): Promise<BuilderRun> {
+    return scheduleByTarget(target, overrides, {
+      scheduler: this._scheduler,
+      logger: scheduleOptions.logger || new logging.NullLogger(),
+      currentDirectory: this._host.getCurrentDirectory(),
+      workspaceRoot: this._host.getWorkspaceRoot(),
+      analytics: scheduleOptions.analytics,
+    });
   }
 }

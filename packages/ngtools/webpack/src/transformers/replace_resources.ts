@@ -10,6 +10,7 @@ import * as ts from 'typescript';
 export function replaceResources(
   shouldTransform: (fileName: string) => boolean,
   getTypeChecker: () => ts.TypeChecker,
+  directTemplateLoading = false,
 ): ts.TransformerFactory<ts.SourceFile> {
 
   return (context: ts.TransformationContext) => {
@@ -17,9 +18,19 @@ export function replaceResources(
 
     const visitNode: ts.Visitor = (node: ts.Decorator) => {
       if (ts.isClassDeclaration(node)) {
-        node.decorators = ts.visitNodes(
+        const decorators = ts.visitNodes(
           node.decorators,
-          (node: ts.Decorator) => visitDecorator(node, typeChecker),
+          (node: ts.Decorator) => visitDecorator(node, typeChecker, directTemplateLoading),
+        );
+
+        return ts.updateClassDeclaration(
+          node,
+          decorators,
+          node.modifiers,
+          node.name,
+          node.typeParameters,
+          node.heritageClauses,
+          node.members,
         );
       }
 
@@ -34,7 +45,10 @@ export function replaceResources(
   };
 }
 
-function visitDecorator(node: ts.Decorator, typeChecker: ts.TypeChecker): ts.Decorator {
+function visitDecorator(
+  node: ts.Decorator,
+  typeChecker: ts.TypeChecker,
+  directTemplateLoading: boolean): ts.Decorator {
   if (!isComponentDecorator(node, typeChecker)) {
     return node;
   }
@@ -56,7 +70,8 @@ function visitDecorator(node: ts.Decorator, typeChecker: ts.TypeChecker): ts.Dec
   // visit all properties
   let properties = ts.visitNodes(
     objectExpression.properties,
-    (node: ts.ObjectLiteralElementLike) => visitComponentMetadata(node, styleReplacements),
+    (node: ts.ObjectLiteralElementLike) =>
+      visitComponentMetadata(node, styleReplacements, directTemplateLoading),
   );
 
   // replace properties with updated properties
@@ -83,6 +98,7 @@ function visitDecorator(node: ts.Decorator, typeChecker: ts.TypeChecker): ts.Dec
 function visitComponentMetadata(
   node: ts.ObjectLiteralElementLike,
   styleReplacements: ts.Expression[],
+  directTemplateLoading: boolean,
 ): ts.ObjectLiteralElementLike | undefined {
   if (!ts.isPropertyAssignment(node) || ts.isComputedPropertyName(node.name)) {
     return node;
@@ -98,7 +114,7 @@ function visitComponentMetadata(
       return ts.updatePropertyAssignment(
         node,
         ts.createIdentifier('template'),
-        createRequireExpression(node.initializer),
+        createRequireExpression(node.initializer, directTemplateLoading ? '!raw-loader!' : ''),
       );
 
     case 'styles':
@@ -133,13 +149,13 @@ function visitComponentMetadata(
   }
 }
 
-export function getResourceUrl(node: ts.Expression): string | null {
+export function getResourceUrl(node: ts.Expression, loader = ''): string | null {
   // only analyze strings
   if (!ts.isStringLiteral(node) && !ts.isNoSubstitutionTemplateLiteral(node)) {
     return null;
   }
 
-  return `${/^\.?\.\//.test(node.text) ? '' : './'}${node.text}`;
+  return `${loader}${/^\.?\.\//.test(node.text) ? '' : './'}${node.text}`;
 }
 
 function isComponentDecorator(node: ts.Node, typeChecker: ts.TypeChecker): node is ts.Decorator {
@@ -155,8 +171,8 @@ function isComponentDecorator(node: ts.Node, typeChecker: ts.TypeChecker): node 
   return false;
 }
 
-function createRequireExpression(node: ts.Expression): ts.Expression {
-  const url = getResourceUrl(node);
+function createRequireExpression(node: ts.Expression, loader = ''): ts.Expression {
+  const url = getResourceUrl(node, loader);
   if (!url) {
     return node;
   }

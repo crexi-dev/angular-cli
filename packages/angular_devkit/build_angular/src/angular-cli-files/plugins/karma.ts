@@ -18,6 +18,8 @@ import { statsErrorsToString } from '../utilities/stats';
 import { getWebpackStatsConfig } from '../models/webpack-configs/stats';
 import { createConsoleLogger } from '@angular-devkit/core/node';
 import { logging } from '@angular-devkit/core';
+import { WebpackTestOptions } from '../models/build-options';
+import { normalizeSourceMaps } from '../../utils/index';
 
 /**
  * Enumerate needed (but not require/imported) dependencies from this file
@@ -63,7 +65,7 @@ const init: any = (config: any, emitter: any, customFileHandlers: any) => {
     ` be used from within Angular CLI and will not work correctly outside of it.`
     )
   }
-  const options = config.buildWebpack.options;
+  const options = config.buildWebpack.options as WebpackTestOptions;
   const logger: logging.Logger = config.buildWebpack.logger || createConsoleLogger();
   successCb = config.buildWebpack.successCb;
   failureCb = config.buildWebpack.failureCb;
@@ -77,7 +79,7 @@ const init: any = (config: any, emitter: any, customFileHandlers: any) => {
   }
 
   // Add a reporter that fixes sourcemap urls.
-  if (options.sourceMap) {
+  if (normalizeSourceMaps(options.sourceMap).scripts) {
     config.reporters.unshift('@angular-devkit/build-angular--sourcemap-reporter');
 
     // Code taken from https://github.com/tschaub/karma-source-map-support.
@@ -208,6 +210,7 @@ const init: any = (config: any, emitter: any, customFileHandlers: any) => {
         const alwaysServe = [
           '/_karma_webpack_/runtime.js',
           '/_karma_webpack_/polyfills.js',
+          '/_karma_webpack_/polyfills-es5.js',
           '/_karma_webpack_/scripts.js',
           '/_karma_webpack_/styles.js',
           '/_karma_webpack_/vendor.js',
@@ -285,7 +288,7 @@ const sourceMapReporter: any = function (this: any, baseReporterDecorator: any, 
 
   muteDuplicateReporterLogging(this, config);
 
-  const urlRegexp = /\(http:\/\/localhost:\d+\/_karma_webpack_\/webpack:\//gi;
+  const urlRegexp = /http:\/\/localhost:\d+\/_karma_webpack_\/webpack:\//gi;
 
   this.onSpecComplete = function (_browser: any, result: any) {
     if (!result.success && result.log.length > 0) {

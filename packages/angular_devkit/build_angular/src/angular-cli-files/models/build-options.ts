@@ -9,22 +9,26 @@
 // TODO: cleanup this file, it's copied as is from Angular CLI.
 
 import { logging } from '@angular-devkit/core';
-import * as ts from 'typescript'; // tslint:disable-line:no-implicit-dependencies
+import { ParsedCommandLine, ScriptTarget } from 'typescript';
 import {
-  AssetPatternObject,
+  AssetPatternClass,
   Budget,
-  CurrentFileReplacement,
   ExtraEntryPoint,
+  OptimizationClass,
+  SourceMapClass,
 } from '../../browser/schema';
+import { NormalizedFileReplacement } from '../../utils/normalize-file-replacements';
 
 export interface BuildOptions {
-  optimization: boolean;
+  optimization: OptimizationClass;
   environment?: string;
   outputPath: string;
   resourcesOutputPath?: string;
   aot?: boolean;
-  sourceMap?: boolean;
+  sourceMap: SourceMapClass;
+  /** @deprecated use sourceMap instead */
   vendorSourceMap?: boolean;
+  /** @deprecated  */
   evalSourceMap?: boolean;
   vendorChunk?: boolean;
   commonChunk?: boolean;
@@ -50,22 +54,32 @@ export interface BuildOptions {
   namedChunks?: boolean;
   subresourceIntegrity?: boolean;
   serviceWorker?: boolean;
+  webWorkerTsConfig?: string;
   skipAppShell?: boolean;
   statsJson: boolean;
   forkTypeChecker: boolean;
   profile?: boolean;
+  es5BrowserSupport?: boolean;
 
   main: string;
   index: string;
   polyfills?: string;
   budgets: Budget[];
-  assets: AssetPatternObject[];
+  assets: AssetPatternClass[];
   scripts: ExtraEntryPoint[];
   styles: ExtraEntryPoint[];
   stylePreprocessorOptions?: { includePaths: string[] };
   lazyModules: string[];
   platform?: 'browser' | 'server';
-  fileReplacements: CurrentFileReplacement[];
+  fileReplacements: NormalizedFileReplacement[];
+  /** @deprecated use only for compatibility in 8.x; will be removed in 9.0 */
+  rebaseRootRelativeCssUrls?: boolean;
+
+  /* Append script target version to filename. */
+  esVersionInFileName?: boolean;
+
+  /* When specified it will be used instead of the script target in the tsconfig.json. */
+  scriptTargetOverride?: ScriptTarget;
 }
 
 export interface WebpackTestOptions extends BuildOptions {
@@ -79,7 +93,7 @@ export interface WebpackConfigOptions<T = BuildOptions> {
   projectRoot: string;
   sourceRoot?: string;
   buildOptions: T;
-  tsConfig: ts.ParsedCommandLine;
+  tsConfig: ParsedCommandLine;
   tsConfigPath: string;
   supportES2015: boolean;
 }

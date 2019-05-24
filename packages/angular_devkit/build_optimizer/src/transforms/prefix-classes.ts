@@ -6,12 +6,13 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import * as ts from 'typescript';
+import { addPureComment } from '../helpers/ast-utils';
 
 /**
  * @deprecated From 0.9.0
  */
 export function testPrefixClasses(content: string) {
-  const exportVarSetter = /(?:export )?(?:var|const)\s+(\S+)\s*=\s*/;
+  const exportVarSetter = /(?:export )?(?:var|const)\s+(?:\S+)\s*=\s*/;
   const multiLineComment = /\s*(?:\/\*[\s\S]*?\*\/)?\s*/;
   const newLine = /\s*\r?\n\s*/;
 
@@ -22,14 +23,14 @@ export function testPrefixClasses(content: string) {
       /\(/, multiLineComment,
       /\s*function \(\) {/, newLine,
       multiLineComment,
-      /function \1\([^\)]*\) \{/, newLine,
+      /function (?:\S+)\([^\)]*\) \{/, newLine,
     ],
     [
       /^/,
       exportVarSetter, multiLineComment,
       /\(/, multiLineComment,
       /\s*function \(_super\) {/, newLine,
-      /\w*\.?__extends\(\w+, _super\);/,
+      /\S*\.?__extends\(\S+, _super\);/,
     ],
   ].map(arr => new RegExp(arr.map(x => x.source).join(''), 'm'));
 
@@ -42,9 +43,6 @@ const extendsHelperName = '__extends';
 export function getPrefixClassesTransformer(): ts.TransformerFactory<ts.SourceFile> {
   return (context: ts.TransformationContext): ts.Transformer<ts.SourceFile> => {
     const transformer: ts.Transformer<ts.SourceFile> = (sf: ts.SourceFile) => {
-
-      const pureFunctionComment = '@__PURE__';
-
       const visitor: ts.Visitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
 
         // Add pure comment to downleveled classes.
@@ -63,12 +61,7 @@ export function getPrefixClassesTransformer(): ts.TransformerFactory<ts.SourceFi
                   varDecl,
                   varDecl.name,
                   varDecl.type,
-                  ts.addSyntheticLeadingComment(
-                    varInitializer,
-                    ts.SyntaxKind.MultiLineCommentTrivia,
-                    pureFunctionComment,
-                    false,
-                  ),
+                  addPureComment(varInitializer),
                 ),
               ],
             ),
@@ -142,9 +135,6 @@ function isDownleveledClass(node: ts.Node): boolean {
     return false;
   }
 
-  // The variable name should be the class name.
-  const className = variableDeclaration.name.text;
-
   const firstStatement = functionStatements[0];
 
   // find return statement - may not be last statement
@@ -166,7 +156,6 @@ function isDownleveledClass(node: ts.Node): boolean {
     // potential non-extended class or wrapped es2015 class
     return (ts.isFunctionDeclaration(firstStatement) || ts.isClassDeclaration(firstStatement))
            && firstStatement.name !== undefined
-           && firstStatement.name.text === className
            && returnStatement.expression.text === firstStatement.name.text;
   } else if (functionExpression.parameters.length !== 1) {
     return false;
@@ -216,6 +205,5 @@ function isDownleveledClass(node: ts.Node): boolean {
 
   return ts.isFunctionDeclaration(secondStatement)
          && secondStatement.name !== undefined
-         && className.endsWith(secondStatement.name.text)
          && returnStatement.expression.text === secondStatement.name.text;
 }

@@ -5,9 +5,9 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { Path, strings } from '@angular-devkit/core';
+import { Path } from '@angular-devkit/core';
 import { EmptyTree, Tree } from '@angular-devkit/schematics';
-import { ModuleOptions, findModule, findModuleFromOptions } from './find-module';
+import { ModuleOptions, buildRelativePath, findModule, findModuleFromOptions } from './find-module';
 
 
 describe('find-module', () => {
@@ -111,12 +111,20 @@ describe('find-module', () => {
       expect(modPath).toEqual('/projects/my-proj/src/app.module.ts' as Path);
     });
 
-    it('should find a module if nameFormatter is provided', () => {
-      tree.create('/projects/my-proj/src/app_test.module.ts', '');
+    it('should find a module when name has underscore', () => {
+      tree.create('/projects/my-proj/src/feature_module/app_test.module.ts', '');
       options.path = '/projects/my-proj/src';
-      options.nameFormatter = strings.underscore;
+      options.name = 'feature_module/new_component';
       const modPath = findModuleFromOptions(tree, options);
-      expect(modPath).toEqual('/projects/my-proj/src/app_test.module.ts' as Path);
+      expect(modPath).toEqual('/projects/my-proj/src/feature_module/app_test.module.ts' as Path);
+    });
+
+    it('should find a module when name has uppercase', () => {
+      tree.create('/projects/my-proj/src/featureModule/appTest.module.ts', '');
+      options.path = '/projects/my-proj/src';
+      options.name = 'featureModule/newComponent';
+      const modPath = findModuleFromOptions(tree, options);
+      expect(modPath).toEqual('/projects/my-proj/src/featureModule/appTest.module.ts' as Path);
     });
 
     it('should find a module if flat is true', () => {
@@ -179,6 +187,19 @@ describe('find-module', () => {
       options.module = 'app.module';
       modPath = findModuleFromOptions(tree, options);
       expect(modPath).toBe('/projects/my-proj/src/app.module.ts' as Path);
+    });
+  });
+
+  describe('buildRelativePath', () => {
+    it('works', () => {
+      expect(buildRelativePath('/test/module', '/test/service'))
+          .toEqual('./service');
+      expect(buildRelativePath('/test/module', '/other/service'))
+          .toEqual('../other/service');
+      expect(buildRelativePath('/module', '/test/service'))
+          .toEqual('./test/service');
+      expect(buildRelativePath('/test/service', '/module'))
+          .toEqual('../module');
     });
   });
 });

@@ -12,9 +12,6 @@ import { getGlobalVariable } from '../../../utils/env';
 export default function () {
   // TODO(architect): Delete this test. It is now in devkit/build-angular.
 
-  // Disable parts of it in webpack tests.
-  const ejected = getGlobalVariable('argv').eject;
-
   const extensions = ['css', 'scss', 'less', 'styl'];
   let promise = Promise.resolve();
 
@@ -59,12 +56,12 @@ export default function () {
         .then(() => expectToFail(() =>
           expectFileToMatch('dist/test-project/styles.css', '"mappings":""')))
         // verify component styles
-        .then(() => expectFileToMatch('dist/test-project/main.js',
+        .then(() => expectFileToMatch('dist/test-project/main-es5.js',
           /.outer.*.inner.*background:\s*#[fF]+/))
-        .then(() => expectFileToMatch('dist/test-project/main.js',
+        .then(() => expectFileToMatch('dist/test-project/main-es5.js',
           /h1.*background:\s*#000+/))
         // Also check imports work on ng test
-        .then(() => !ejected && ng('test', '--watch=false'))
+        .then(() => ng('test', '--watch=false'))
         .then(() => updateJsonFile('angular.json', workspaceJson => {
           const appArchitect = workspaceJson.projects['test-project'].architect;
           appArchitect.build.options.styles = [

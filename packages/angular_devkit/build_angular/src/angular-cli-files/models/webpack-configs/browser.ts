@@ -6,40 +6,32 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import { LicenseWebpackPlugin } from 'license-webpack-plugin';
-import * as path from 'path';
-import { IndexHtmlWebpackPlugin } from '../../plugins/index-html-webpack-plugin';
-import { generateEntryPoints } from '../../utilities/package-chunk-sort';
+import * as webpack from 'webpack';
 import { WebpackConfigOptions } from '../build-options';
-import { normalizeExtraEntryPoints } from './utils';
+import { getSourceMapDevTool, isPolyfillsEntry, normalizeExtraEntryPoints } from './utils';
 
 const SubresourceIntegrityPlugin = require('webpack-subresource-integrity');
 
 
-export function getBrowserConfig(wco: WebpackConfigOptions) {
-  const { root, buildOptions } = wco;
+export function getBrowserConfig(wco: WebpackConfigOptions): webpack.Configuration {
+  const { buildOptions } = wco;
   const extraPlugins = [];
 
-  let sourcemaps: string | false = false;
-  if (buildOptions.sourceMap) {
-    // See https://webpack.js.org/configuration/devtool/ for sourcemap types.
-    if (buildOptions.evalSourceMap && !buildOptions.optimization) {
-      // Produce eval sourcemaps for development with serve, which are faster.
-      sourcemaps = 'eval';
-    } else {
-      // Produce full separate sourcemaps for production.
-      sourcemaps = 'source-map';
-    }
-  }
+  let isEval = false;
+  const { styles: stylesOptimization, scripts: scriptsOptimization } = buildOptions.optimization;
+  const {
+    styles: stylesSourceMap,
+    scripts: scriptsSourceMap,
+    hidden: hiddenSourceMap,
+  } = buildOptions.sourceMap;
 
-  if (buildOptions.index) {
-    extraPlugins.push(new IndexHtmlWebpackPlugin({
-      input: path.resolve(root, buildOptions.index),
-      output: path.basename(buildOptions.index),
-      baseHref: buildOptions.baseHref,
-      entrypoints: generateEntryPoints(buildOptions),
-      deployUrl: buildOptions.deployUrl,
-      sri: buildOptions.subresourceIntegrity,
-    }));
+  // See https://webpack.js.org/configuration/devtool/ for sourcemap types.
+  if ((stylesSourceMap || scriptsSourceMap) &&
+    buildOptions.evalSourceMap &&
+    !stylesOptimization &&
+    !scriptsOptimization) {
+    // Produce eval sourcemaps for development with serve, which are faster.
+    isEval = true;
   }
 
   if (buildOptions.subresourceIntegrity) {
@@ -59,11 +51,19 @@ export function getBrowserConfig(wco: WebpackConfigOptions) {
     }));
   }
 
+  if (!isEval && (scriptsSourceMap || stylesSourceMap)) {
+    extraPlugins.push(getSourceMapDevTool(
+      !!scriptsSourceMap,
+      !!stylesSourceMap,
+      hiddenSourceMap,
+    ));
+  }
+
   const globalStylesBundleNames = normalizeExtraEntryPoints(buildOptions.styles, 'styles')
     .map(style => style.bundleName);
 
   return {
-    devtool: sourcemaps,
+    devtool: isEval ? 'eval' : false,
     resolve: {
       mainFields: [
         ...(wco.supportES2015 ? ['es2015'] : []),
@@ -99,13 +99,13 @@ export function getBrowserConfig(wco: WebpackConfigOptions) {
               const moduleName = module.nameForCondition ? module.nameForCondition() : '';
 
               return /[\\/]node_modules[\\/]/.test(moduleName)
-                && !chunks.some(({ name }) => name === 'polyfills'
+                && !chunks.some(({ name }) => isPolyfillsEntry(name)
                   || globalStylesBundleNames.includes(name));
             },
           },
         },
       },
-    },
+    } as webpack.Options.Optimization,
     plugins: extraPlugins,
     node: false,
   };

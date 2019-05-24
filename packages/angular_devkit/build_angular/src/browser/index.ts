@@ -6,17 +6,35 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import {
-  BuildEvent,
-  Builder,
-  BuilderConfiguration,
   BuilderContext,
+  BuilderOutput,
+  createBuilder,
 } from '@angular-devkit/architect';
-import { LoggingCallback, WebpackBuilder } from '@angular-devkit/build-webpack';
-import { Path, getSystemPath, join, normalize, resolve, virtualFs } from '@angular-devkit/core';
+import {
+  BuildResult,
+  EmittedFiles,
+  WebpackLoggingCallback,
+  runWebpack,
+ } from '@angular-devkit/build-webpack';
+import {
+  experimental,
+  getSystemPath,
+  join,
+  json,
+  logging,
+  normalize,
+  resolve,
+  tags,
+  virtualFs,
+} from '@angular-devkit/core';
+import { NodeJsSyncHost } from '@angular-devkit/core/node';
 import * as fs from 'fs';
-import { Observable, concat, of, throwError } from 'rxjs';
-import { concatMap, last, tap } from 'rxjs/operators';
-import * as ts from 'typescript'; // tslint:disable-line:no-implicit-dependencies
+import * as path from 'path';
+import { from, of } from 'rxjs';
+import { bufferCount, catchError, concatMap, map, mergeScan, switchMap } from 'rxjs/operators';
+import { ScriptTarget } from 'typescript';
+import * as webpack from 'webpack';
+import { NgBuildAnalyticsPlugin } from '../../plugins/webpack/analytics';
 import { WebpackConfigOptions } from '../angular-cli-files/models/build-options';
 import {
   getAotConfig,
@@ -25,169 +43,34 @@ import {
   getNonAotConfig,
   getStatsConfig,
   getStylesConfig,
+  getWorkerConfig,
 } from '../angular-cli-files/models/webpack-configs';
+import {
+  IndexHtmlTransform,
+  writeIndexHtml,
+} from '../angular-cli-files/utilities/index-file/write-index-html';
 import { readTsconfig } from '../angular-cli-files/utilities/read-tsconfig';
-import { requireProjectModule } from '../angular-cli-files/utilities/require-project-module';
 import { augmentAppWithServiceWorker } from '../angular-cli-files/utilities/service-worker';
 import {
   statsErrorsToString,
   statsToString,
   statsWarningsToString,
 } from '../angular-cli-files/utilities/stats';
-import { defaultProgress, normalizeAssetPatterns, normalizeFileReplacements } from '../utils';
-import { AssetPatternObject, BrowserBuilderSchema, CurrentFileReplacement } from './schema';
-const SpeedMeasurePlugin = require('speed-measure-webpack-plugin');
-const webpackMerge = require('webpack-merge');
+import { ExecutionTransformer } from '../transforms';
+import { deleteOutputDir, isEs5SupportNeeded } from '../utils';
+import { Version } from '../utils/version';
+import { generateBrowserWebpackConfigFromContext } from '../utils/webpack-browser-config';
+import { Schema as BrowserBuilderSchema } from './schema';
 
+export type BrowserBuilderOutput = json.JsonObject & BuilderOutput & {
+  outputPath: string;
+};
 
-// TODO: figure out a better way to normalize assets, extra entry points, file replacements,
-// and whatever else needs to be normalized, while keeping type safety.
-// Right now this normalization has to be done in all other builders that make use of the
-// BrowserBuildSchema and BrowserBuilder.buildWebpackConfig.
-// It would really help if it happens during architect.validateBuilderOptions, or similar.
-export interface NormalizedBrowserBuilderSchema extends BrowserBuilderSchema {
-  assets: AssetPatternObject[];
-  fileReplacements: CurrentFileReplacement[];
-}
-
-export class BrowserBuilder implements Builder<BrowserBuilderSchema> {
-
-  constructor(public context: BuilderContext) { }
-
-  run(builderConfig: BuilderConfiguration<BrowserBuilderSchema>): Observable<BuildEvent> {
-    const options = builderConfig.options;
-    const root = this.context.workspace.root;
-    const projectRoot = resolve(root, builderConfig.root);
-    const host = new virtualFs.AliasHost(this.context.host as virtualFs.Host<fs.Stats>);
-    const webpackBuilder = new WebpackBuilder({ ...this.context, host });
-
-    return of(null).pipe(
-      concatMap(() => options.deleteOutputPath
-        ? this._deleteOutputDir(root, normalize(options.outputPath), this.context.host)
-        : of(null)),
-      concatMap(() => normalizeFileReplacements(options.fileReplacements, host, root)),
-      tap(fileReplacements => options.fileReplacements = fileReplacements),
-      concatMap(() => normalizeAssetPatterns(
-        options.assets, host, root, projectRoot, builderConfig.sourceRoot)),
-      // Replace the assets in options with the normalized version.
-      tap((assetPatternObjects => options.assets = assetPatternObjects)),
-      concatMap(() => {
-        let webpackConfig;
-        try {
-          webpackConfig = this.buildWebpackConfig(root, projectRoot, host,
-            options as NormalizedBrowserBuilderSchema);
-        } catch (e) {
-          return throwError(e);
-        }
-
-        return webpackBuilder.runWebpack(webpackConfig, getBrowserLoggingCb(options.verbose));
-      }),
-      concatMap(buildEvent => {
-        if (buildEvent.success && !options.watch && options.serviceWorker) {
-          return new Observable(obs => {
-            augmentAppWithServiceWorker(
-              this.context.host,
-              root,
-              projectRoot,
-              resolve(root, normalize(options.outputPath)),
-              options.baseHref || '/',
-              options.ngswConfigPath,
-            ).then(
-              () => {
-                obs.next({ success: true });
-                obs.complete();
-              },
-              (err: Error) => {
-                obs.error(err);
-              },
-            );
-          });
-        } else {
-          return of(buildEvent);
-        }
-      }),
-    );
-  }
-
-  buildWebpackConfig(
-    root: Path,
-    projectRoot: Path,
-    host: virtualFs.Host<fs.Stats>,
-    options: NormalizedBrowserBuilderSchema,
-  ) {
-    // Ensure Build Optimizer is only used with AOT.
-    if (options.buildOptimizer && !options.aot) {
-      throw new Error('The `--build-optimizer` option cannot be used without `--aot`.');
-    }
-
-    let wco: WebpackConfigOptions<NormalizedBrowserBuilderSchema>;
-
-    const tsConfigPath = getSystemPath(normalize(resolve(root, normalize(options.tsConfig))));
-    const tsConfig = readTsconfig(tsConfigPath);
-
-    const projectTs = requireProjectModule(getSystemPath(projectRoot), 'typescript') as typeof ts;
-
-    const supportES2015 = tsConfig.options.target !== projectTs.ScriptTarget.ES3
-      && tsConfig.options.target !== projectTs.ScriptTarget.ES5;
-
-    wco = {
-      root: getSystemPath(root),
-      logger: this.context.logger,
-      projectRoot: getSystemPath(projectRoot),
-      buildOptions: options,
-      tsConfig,
-      tsConfigPath,
-      supportES2015,
-    };
-
-    wco.buildOptions.progress = defaultProgress(wco.buildOptions.progress);
-
-    const webpackConfigs: {}[] = [
-      getCommonConfig(wco),
-      getBrowserConfig(wco),
-      getStylesConfig(wco),
-      getStatsConfig(wco),
-    ];
-
-    if (wco.buildOptions.main || wco.buildOptions.polyfills) {
-      const typescriptConfigPartial = wco.buildOptions.aot
-        ? getAotConfig(wco, host)
-        : getNonAotConfig(wco, host);
-      webpackConfigs.push(typescriptConfigPartial);
-    }
-
-    const webpackConfig = webpackMerge(webpackConfigs);
-
-    if (options.profile) {
-      const smp = new SpeedMeasurePlugin({
-        outputFormat: 'json',
-        outputTarget: getSystemPath(join(root, 'speed-measure-plugin.json')),
-      });
-
-      return smp.wrap(webpackConfig);
-    }
-
-    return webpackConfig;
-  }
-
-  private _deleteOutputDir(root: Path, outputPath: Path, host: virtualFs.Host) {
-    const resolvedOutputPath = resolve(root, outputPath);
-    if (resolvedOutputPath === root) {
-      throw new Error('Output path MUST not be project root directory!');
-    }
-
-    return host.exists(resolvedOutputPath).pipe(
-      concatMap(exists => exists
-        // TODO: remove this concat once host ops emit an event.
-        ? concat(host.delete(resolvedOutputPath), of(null)).pipe(last())
-        // ? of(null)
-        : of(null)),
-    );
-  }
-}
-
-export const getBrowserLoggingCb = (verbose: boolean): LoggingCallback =>
-  (stats, config, logger) => {
+export function createBrowserLoggingCallback(
+  verbose: boolean,
+  logger: logging.LoggerApi,
+): WebpackLoggingCallback {
+  return (stats, config) => {
     // config.stats contains our own stats settings, added during buildWebpackConfig().
     const json = stats.toJson(config.stats);
     if (verbose) {
@@ -203,5 +86,207 @@ export const getBrowserLoggingCb = (verbose: boolean): LoggingCallback =>
       logger.error(statsErrorsToString(json, config.stats));
     }
   };
+}
 
-export default BrowserBuilder;
+export async function buildBrowserWebpackConfigFromContext(
+  options: BrowserBuilderSchema,
+  context: BuilderContext,
+  host: virtualFs.Host<fs.Stats> = new NodeJsSyncHost(),
+): Promise<{ workspace: experimental.workspace.Workspace, config: webpack.Configuration[] }> {
+  return generateBrowserWebpackConfigFromContext(
+    options,
+    context,
+    wco => [
+      getCommonConfig(wco),
+      getBrowserConfig(wco),
+      getStylesConfig(wco),
+      getStatsConfig(wco),
+      getAnalyticsConfig(wco, context),
+      getCompilerConfig(wco),
+      wco.buildOptions.webWorkerTsConfig ? getWorkerConfig(wco) : {},
+    ],
+    host,
+  );
+}
+
+function getAnalyticsConfig(
+  wco: WebpackConfigOptions,
+  context: BuilderContext,
+): webpack.Configuration {
+  if (context.analytics) {
+    // If there's analytics, add our plugin. Otherwise no need to slow down the build.
+    let category = 'build';
+    if (context.builder) {
+      // We already vetted that this is a "safe" package, otherwise the analytics would be noop.
+      category = context.builder.builderName.split(':')[1];
+    }
+
+    // The category is the builder name if it's an angular builder.
+    return {
+      plugins: [
+        new NgBuildAnalyticsPlugin(wco.projectRoot, context.analytics, category),
+      ],
+    };
+  }
+
+  return {};
+}
+
+function getCompilerConfig(wco: WebpackConfigOptions): webpack.Configuration {
+  if (wco.buildOptions.main || wco.buildOptions.polyfills) {
+    return wco.buildOptions.aot ? getAotConfig(wco) : getNonAotConfig(wco);
+  }
+
+  return {};
+}
+
+async function initialize(
+  options: BrowserBuilderSchema,
+  context: BuilderContext,
+  host: virtualFs.Host<fs.Stats>,
+  webpackConfigurationTransform?: ExecutionTransformer<webpack.Configuration>,
+): Promise<{ workspace: experimental.workspace.Workspace, config: webpack.Configuration[] }> {
+  const { config, workspace } = await buildBrowserWebpackConfigFromContext(options, context, host);
+
+  let transformedConfig;
+  if (webpackConfigurationTransform) {
+    transformedConfig = [];
+    for (const c of config) {
+      transformedConfig.push(await webpackConfigurationTransform(c));
+    }
+  }
+
+  if (options.deleteOutputPath) {
+    await deleteOutputDir(
+      normalize(context.workspaceRoot),
+      normalize(options.outputPath),
+      host,
+    ).toPromise();
+  }
+
+  return { config: transformedConfig || config, workspace };
+}
+
+export function buildWebpackBrowser(
+  options: BrowserBuilderSchema,
+  context: BuilderContext,
+  transforms: {
+    webpackConfiguration?: ExecutionTransformer<webpack.Configuration>,
+    logging?: WebpackLoggingCallback,
+    indexHtml?: IndexHtmlTransform,
+  } = {},
+) {
+  const host = new NodeJsSyncHost();
+  const root = normalize(context.workspaceRoot);
+
+  // Check Angular version.
+  Version.assertCompatibleAngularVersion(context.workspaceRoot);
+
+  const loggingFn = transforms.logging
+    || createBrowserLoggingCallback(!!options.verbose, context.logger);
+
+  return from(initialize(options, context, host, transforms.webpackConfiguration)).pipe(
+    switchMap(({ workspace, config: configs }) => {
+      const projectName = context.target
+        ? context.target.project : workspace.getDefaultProjectName();
+
+      if (!projectName) {
+        throw new Error('Must either have a target from the context or a default project.');
+      }
+
+      const projectRoot = resolve(
+        workspace.root,
+        normalize(workspace.getProject(projectName).root),
+      );
+
+      const tsConfigPath = path.resolve(getSystemPath(workspace.root), options.tsConfig);
+      const tsConfig = readTsconfig(tsConfigPath);
+
+      if (isEs5SupportNeeded(projectRoot) &&
+          tsConfig.options.target !== ScriptTarget.ES5 &&
+          tsConfig.options.target !== ScriptTarget.ES2015) {
+        context.logger.warn(tags.stripIndent`
+          WARNING: Using differential loading with targets ES5 and ES2016 or higher may
+          cause problems. Browsers with support for ES2015 will load the ES2016+ scripts
+          referenced with script[type="module"] but they may not support ES2016+ syntax.
+        `);
+      }
+
+      return from(configs).pipe(
+        // the concurrency parameter (3rd parameter of mergeScan) is deliberately
+        // set to 1 to make sure the build steps are executed in sequence.
+        mergeScan((lastResult, config) => {
+          // Make sure to only run the 2nd build step, if 1st one succeeded
+          if (lastResult.success) {
+            return runWebpack(config, context, { logging: loggingFn });
+          } else {
+            return of();
+          }
+        }, { success: true } as BuildResult, 1),
+        bufferCount(configs.length),
+        switchMap(buildEvents => {
+          const success = buildEvents.every(r => r.success);
+          if (success && options.index) {
+            let noModuleFiles: EmittedFiles[] | undefined;
+            let moduleFiles: EmittedFiles[] | undefined;
+            let files: EmittedFiles[] | undefined;
+
+            const [ES5Result, ES2015Result] = buildEvents;
+
+            if (buildEvents.length === 2) {
+              noModuleFiles = ES5Result.emittedFiles;
+              moduleFiles = ES2015Result.emittedFiles || [];
+              files = moduleFiles.filter(x => x.extension === '.css');
+            } else {
+              const { emittedFiles = [] } = ES5Result;
+              files = emittedFiles.filter(x => x.name !== 'polyfills-es5');
+              noModuleFiles = emittedFiles.filter(x => x.name === 'polyfills-es5');
+            }
+
+            return writeIndexHtml({
+              host,
+              outputPath: resolve(root, normalize(options.outputPath)),
+              indexPath: join(root, options.index),
+              files,
+              noModuleFiles,
+              moduleFiles,
+              baseHref: options.baseHref,
+              deployUrl: options.deployUrl,
+              sri: options.subresourceIntegrity,
+              scripts: options.scripts,
+              styles: options.styles,
+              postTransform: transforms.indexHtml,
+            })
+            .pipe(
+              map(() => ({ success: true })),
+              catchError(() => of({ success: false })),
+            );
+          } else {
+            return of({ success });
+          }
+        }),
+        concatMap(buildEvent => {
+          if (buildEvent.success && !options.watch && options.serviceWorker) {
+            return from(augmentAppWithServiceWorker(
+              host,
+              root,
+              projectRoot,
+              resolve(root, normalize(options.outputPath)),
+              options.baseHref || '/',
+              options.ngswConfigPath,
+            ).then(() => ({ success: true }), () => ({ success: false })));
+          } else {
+            return of(buildEvent);
+          }
+        }),
+        map(event => ({
+          ...event,
+          // If we use differential loading, both configs have the same outputs
+          outputPath: path.resolve(context.workspaceRoot, options.outputPath),
+        } as BrowserBuilderOutput)),
+      );
+    }),
+  );
+}
+
+export default createBuilder<json.JsonObject & BrowserBuilderSchema>(buildWebpackBrowser);

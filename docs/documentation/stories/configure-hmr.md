@@ -1,7 +1,9 @@
+**HMR is a webpack feature that is not officially supported by Angular. Community contributors can submit PRs against this page to add corrections, new information, or advice.**.
+
 # Configure Hot Module Replacement
 
-Hot Module Replacement (HMR) is a WebPack feature to update code in a running app without rebuilding it.
-This results in faster updates and less full page-reloads.
+Hot Module Replacement (HMR) is a [webpack](https://webpack.js.org) feature to update code in a running app without rebuilding it.
+This results in faster updates and fewer full page-reloads.
 
 You can read more about HMR by visiting [this page](https://webpack.js.org/guides/hot-module-replacement/).
 
@@ -42,7 +44,7 @@ export const environment = {
 
 
 Update `angular.json` to include an hmr environment as explained [here](./application-environments)
-and add configurations within build and serve to enable hmr. Note that `<project-name>` here 
+and add configurations within build and serve to enable hmr. Note that `<project-name>` here
 represents the name of the project you are adding this configuration to in `angular.json`.
 
 ```json
@@ -176,6 +178,4 @@ When starting the server Webpack will tell you that it’s enabled:
     NOTICE Hot Module Replacement (HMR) is enabled for the dev server.
 
 
-Now if you make changes to one of your components they changes should be visible automatically without a complete browser refresh.
-
-
+Now if you make changes to one of your components the changes should be visible automatically without a complete browser refresh.

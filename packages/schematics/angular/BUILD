@@ -5,15 +5,18 @@
 
 licenses(["notice"])  # MIT
 
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_library")
-load("@build_bazel_rules_nodejs//:defs.bzl", "jasmine_node_test")
+load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
+load("@npm_bazel_typescript//:defs.bzl", "ts_library")
 load("//tools:ts_json_schema.bzl", "ts_json_schema")
 
 package(default_visibility = ["//visibility:public"])
 
 # Create a list of Tuple("path/file.json", "path_file") to be used as rules
 ALL_SCHEMA_TARGETS_PAIR = [
-    (x, x.replace("/", "_").replace("-", "_").replace(".json", ""))
+    (
+        x,
+        x.replace("/", "_").replace("-", "_").replace(".json", ""),
+    )
     for x in glob(["*/schema.json"])
 ]
 
@@ -40,7 +43,7 @@ ts_library(
             "*/files/**/*.ts",
             "*/other-files/**/*.ts",
             # Exclude test helpers.
-            "utility/test/**/*.ts"
+            "utility/test/**/*.ts",
         ],
     ),
     module_name = "@schematics/angular",
@@ -49,21 +52,30 @@ ts_library(
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/schematics",
         "//packages/angular_devkit/schematics:tasks",
-        "@rxjs",
-        "@rxjs//operators",
+        "//packages/schematics/angular/third_party/github.com/Microsoft/TypeScript",
         "@npm//@types/node",
-        "@npm//typescript",
+        "@npm//rxjs",
+        "@npm//tslint",
     ],
 )
 
+jasmine_node_test(
+    name = "no_typescript_runtime_dep_test",
+    srcs = ["no_typescript_runtime_dep_spec.js"],
+    deps = [
+        ":angular",
+        "@npm//jasmine",
+    ],
+)
 
 ts_library(
     name = "angular_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "**/*_spec.ts",
             "**/*_spec_large.ts",
-            "utility/test/**/*.ts"
+            "utility/test/**/*.ts",
         ],
     ),
     data = glob(
@@ -71,22 +83,22 @@ ts_library(
             "**/*.json",
             "*/files/**",
             "*/other-files/**",
-        ]
+        ],
     ),
+    # @external_begin
+    tsconfig = "//:tsconfig-test.json",
     deps = ALL_SCHEMA_DEPS + [
         ":angular",
         "//packages/angular_devkit/core",
+        "//packages/angular_devkit/core:node_testing",
         "//packages/angular_devkit/schematics",
         "//packages/angular_devkit/schematics:testing",
-        "@rxjs",
-        "@rxjs//operators",
+        "//packages/schematics/angular/third_party/github.com/Microsoft/TypeScript",
         "@npm//@types/node",
         "@npm//@types/jasmine",
-        "@npm//typescript",
+        "@npm//rxjs",
+        "@npm//tslint",
     ],
-    testonly = True,
-    # @external_begin
-    tsconfig = "//:tsconfig-test.json",
     # @external_end
 )
 
@@ -94,8 +106,8 @@ jasmine_node_test(
     name = "angular_test",
     srcs = [":angular_test_lib"],
     deps = [
+        "//packages/schematics/angular/third_party/github.com/Microsoft/TypeScript",
         "@npm//jasmine",
         "@npm//source-map",
-        "@npm//chokidar",
     ],
 )

@@ -40,14 +40,11 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
   const entryPoints: { [key: string]: string[] } = {};
   const globalStylePaths: string[] = [];
   const extraPlugins = [];
-  const cssSourceMap = buildOptions.sourceMap;
+
+  const cssSourceMap = buildOptions.sourceMap.styles;
 
   // Determine hashing format.
   const hashFormat = getOutputHashFormat(buildOptions.outputHashing as string);
-  // Convert absolute resource URLs to account for base-href and deploy-url.
-  const baseHref = buildOptions.baseHref || '';
-  const deployUrl = buildOptions.deployUrl || '';
-  const resourcesOutputPath = buildOptions.resourcesOutputPath || '';
 
   const postcssPluginCreator = function (loader: webpack.loader.LoaderContext) {
     return [
@@ -69,10 +66,11 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
         },
       }),
       PostcssCliResources({
-        baseHref,
-        deployUrl,
-        resourcesOutputPath,
+        baseHref: buildOptions.baseHref,
+        deployUrl: buildOptions.deployUrl,
+        resourcesOutputPath: buildOptions.resourcesOutputPath,
         loader,
+        rebaseRootRelative: buildOptions.rebaseRootRelativeCssUrls,
         filename: `[name]${hashFormat.file}.[ext]`,
       }),
       autoprefixer(),
@@ -122,14 +120,14 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
     }
   }
 
-  let dartSass: {} | undefined;
+  let sassImplementation: {} | undefined;
+  let fiber: {} | undefined;
   try {
     // tslint:disable-next-line:no-implicit-dependencies
-    dartSass = require('sass');
-  } catch { }
+    sassImplementation = require('node-sass');
+  } catch {
+    sassImplementation = require('sass');
 
-  let fiber: {} | undefined;
-  if (dartSass) {
     try {
       // tslint:disable-next-line:no-implicit-dependencies
       fiber = require('fibers');
@@ -144,7 +142,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
       use: [{
         loader: 'sass-loader',
         options: {
-          implementation: dartSass,
+          implementation: sassImplementation,
           fiber,
           sourceMap: cssSourceMap,
           // bootstrap-sass requires a minimum precision of 8
@@ -187,7 +185,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
         options: {
           ident: 'embedded',
           plugins: postcssPluginCreator,
-          sourceMap: cssSourceMap ? 'inline' : false,
+          sourceMap: cssSourceMap && !buildOptions.sourceMap.hidden ? 'inline' : false,
         },
       },
       ...(use as webpack.Loader[]),
@@ -208,7 +206,10 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
             options: {
               ident: buildOptions.extractCss ? 'extracted' : 'embedded',
               plugins: postcssPluginCreator,
-              sourceMap: cssSourceMap && !buildOptions.extractCss ? 'inline' : cssSourceMap,
+              sourceMap: cssSourceMap
+                && !buildOptions.extractCss
+                && !buildOptions.sourceMap.hidden
+                ? 'inline' : cssSourceMap,
             },
           },
           ...(use as webpack.Loader[]),

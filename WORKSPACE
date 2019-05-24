@@ -1,78 +1,82 @@
 workspace(name = "angular_cli")
 
-# We get Buildifier from here.
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
 http_archive(
-    name = "com_github_bazelbuild_buildtools",
-    url = "https://github.com/bazelbuild/buildtools/archive/0.15.0.zip",
-    strip_prefix = "buildtools-0.15.0",
-    sha256 = "76d1837a86fa6ef5b4a07438f8489f00bfa1b841e5643b618e01232ba884b1fe",
+    name = "build_bazel_rules_nodejs",
+    sha256 = "fb87ed5965cef93188af9a7287511639403f4b0da418961ce6defb9dcf658f51",
+    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/0.27.7/rules_nodejs-0.27.7.tar.gz"],
 )
 
-# Load the TypeScript rules, its dependencies, and setup the workspace.
-http_archive(
-    name = "build_bazel_rules_typescript",
-    url = "https://github.com/bazelbuild/rules_typescript/archive/0.20.3.zip",
-    strip_prefix = "rules_typescript-0.20.3",
+# We use protocol buffers for the Build Event Protocol
+git_repository(
+    name = "com_google_protobuf",
+    commit = "b6375e03aa80274dae89410efdf46346413b2247",
+    remote = "https://github.com/protocolbuffers/protobuf",
 )
 
-load("@build_bazel_rules_typescript//:package.bzl", "rules_typescript_dependencies")
-# build_bazel_rules_nodejs is loaded transitively through rules_typescript_dependencies.
-rules_typescript_dependencies()
+load("@com_google_protobuf//:protobuf_deps.bzl", "protobuf_deps")
 
-load("@com_github_bazelbuild_buildtools//buildifier:deps.bzl", "buildifier_dependencies")
-buildifier_dependencies()
-
-load("@io_bazel_rules_go//go:def.bzl", "go_register_toolchains", "go_rules_dependencies")
-go_rules_dependencies()
-go_register_toolchains()
-
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_setup_workspace")
-ts_setup_workspace()
+protobuf_deps()
 
 load("@build_bazel_rules_nodejs//:defs.bzl", "check_bazel_version", "node_repositories", "yarn_install")
+
 # 0.18.0 is needed for .bazelignore
-check_bazel_version("0.18.0")
+check_bazel_version(minimum_bazel_version = "0.18.0")
+
 node_repositories(
-    node_version = "10.9.0",
-    yarn_version = "1.9.2",
     node_repositories = {
         "10.9.0-darwin_amd64": (
             "node-v10.9.0-darwin-x64.tar.gz",
             "node-v10.9.0-darwin-x64",
-            "3c4fe75dacfcc495a432a7ba2dec9045cff359af2a5d7d0429c84a424ef686fc"
+            "3c4fe75dacfcc495a432a7ba2dec9045cff359af2a5d7d0429c84a424ef686fc",
         ),
         "10.9.0-linux_amd64": (
             "node-v10.9.0-linux-x64.tar.xz",
             "node-v10.9.0-linux-x64",
-            "c5acb8b7055ee0b6ac653dc4e458c5db45348cecc564b388f4ed1def84a329ff"
+            "c5acb8b7055ee0b6ac653dc4e458c5db45348cecc564b388f4ed1def84a329ff",
         ),
         "10.9.0-windows_amd64": (
             "node-v10.9.0-win-x64.zip",
             "node-v10.9.0-win-x64",
-            "6a75cdbb69d62ed242d6cbf0238a470bcbf628567ee339d4d098a5efcda2401e"
+            "6a75cdbb69d62ed242d6cbf0238a470bcbf628567ee339d4d098a5efcda2401e",
         ),
     },
+    node_version = "10.9.0",
     yarn_repositories = {
         "1.9.2": (
             "yarn-v1.9.2.tar.gz",
             "yarn-v1.9.2",
-            "3ad69cc7f68159a562c676e21998eb21b44138cae7e8fe0749a7d620cf940204"
+            "3ad69cc7f68159a562c676e21998eb21b44138cae7e8fe0749a7d620cf940204",
         ),
     },
+    yarn_version = "1.9.2",
 )
 
 yarn_install(
     name = "npm",
-    package_json = "//:package.json",
-    yarn_lock = "//:yarn.lock",
     data = [
         "//:tools/yarn/check-yarn.js",
     ],
+    package_json = "//:package.json",
+    yarn_lock = "//:yarn.lock",
 )
 
-http_archive(
-    name = "rxjs",
-    url = "https://registry.yarnpkg.com/rxjs/-/rxjs-6.3.3.tgz",
-    strip_prefix = "package/src",
-    sha256 = "72b0b4e517f43358f554c125e40e39f67688cd2738a8998b4a266981ed32f403",
-)
+load("@npm//:install_bazel_dependencies.bzl", "install_bazel_dependencies")
+
+install_bazel_dependencies()
+
+load("@npm_bazel_typescript//:defs.bzl", "ts_setup_workspace")
+
+ts_setup_workspace()
+
+# Load karma dependencies
+load("@npm_bazel_karma//:package.bzl", "rules_karma_dependencies")
+
+rules_karma_dependencies()
+
+# Setup the rules_webtesting toolchain
+load("@io_bazel_rules_webtesting//web:repositories.bzl", "web_test_repositories")
+
+web_test_repositories()

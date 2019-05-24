@@ -36,7 +36,9 @@ function _getEnumFromValue<E, T extends E[keyof E]>(
   }
 
   if (Object.values(enumeration).indexOf(value) !== -1) {
-    return value as unknown as T;
+    // TODO: this should be unknown
+    // tslint:disable-next-line:no-any
+    return value as any as T;
   }
 
   return defaultValue;
@@ -253,6 +255,9 @@ export async function parseJsonSchemaToOptions(
     const deprecated = (xDeprecated === true || typeof xDeprecated == 'string')
       ? xDeprecated : undefined;
 
+    const xUserAnalytics = current['x-user-analytics'];
+    const userAnalytics = typeof xUserAnalytics == 'number' ? xUserAnalytics : undefined;
+
     const option: Option = {
       name,
       description: '' + (current.description === undefined ? '' : current.description),
@@ -263,6 +268,7 @@ export async function parseJsonSchemaToOptions(
       aliases,
       ...format !== undefined ? { format } : {},
       hidden,
+      ...userAnalytics ? { userAnalytics } : {},
       ...deprecated !== undefined ? { deprecated } : {},
       ...positional !== undefined ? { positional } : {},
     };

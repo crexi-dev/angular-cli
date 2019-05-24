@@ -14,13 +14,7 @@ import {
   normalize,
   virtualFs,
 } from '@angular-devkit/core';
-import { Observable, from, of } from 'rxjs';
-import { concat, concatMap, ignoreElements, map, mergeMap, tap, toArray } from 'rxjs/operators';
-import {
-  CurrentFileReplacement,
-  DeprecatedFileReplacment,
-  FileReplacement,
-} from '../browser/schema';
+import { FileReplacement } from '../browser/schema';
 
 
 export class MissingFileReplacementException extends BaseException {
@@ -36,48 +30,43 @@ export interface NormalizedFileReplacement {
 
 export function normalizeFileReplacements(
   fileReplacements: FileReplacement[],
-  host: virtualFs.Host,
+  host: virtualFs.SyncDelegateHost,
   root: Path,
-): Observable<NormalizedFileReplacement[]> {
+): NormalizedFileReplacement[] {
   if (fileReplacements.length === 0) {
-    return of([]);
+    return [];
   }
 
-  // Ensure all the replacements exist.
-  const errorOnFalse = (path: Path) => tap((exists: boolean) => {
-    if (!exists) {
-      throw new MissingFileReplacementException(getSystemPath(path));
-    }
-  });
+  const normalizedReplacement = fileReplacements
+    .map(replacement => normalizeFileReplacement(replacement, root));
 
-  return from(fileReplacements).pipe(
-    map(replacement => normalizeFileReplacement(replacement, root)),
-    concatMap(normalized => {
-      return from([normalized.replace, normalized.with]).pipe(
-        mergeMap(path => host.exists(path).pipe(errorOnFalse(path))),
-        ignoreElements(),
-        concat(of(normalized)),
-      );
-    }),
-    toArray(),
-  );
+  for (const { replace, with: replacementWith } of normalizedReplacement) {
+    if (!host.exists(replacementWith)) {
+      throw new MissingFileReplacementException(getSystemPath(replacementWith));
+    }
+
+    if (!host.exists(replace)) {
+      throw new MissingFileReplacementException(getSystemPath(replace));
+    }
+  }
+
+  return normalizedReplacement;
 }
 
 function normalizeFileReplacement(
   fileReplacement: FileReplacement,
   root?: Path,
 ): NormalizedFileReplacement {
-  const currentFormat = fileReplacement as CurrentFileReplacement;
-  const maybeOldFormat = fileReplacement as DeprecatedFileReplacment;
-
   let replacePath: Path;
   let withPath: Path;
-  if (maybeOldFormat.src && maybeOldFormat.replaceWith) {
-    replacePath = normalize(maybeOldFormat.src);
-    withPath = normalize(maybeOldFormat.replaceWith);
+  if (fileReplacement.src && fileReplacement.replaceWith) {
+    replacePath = normalize(fileReplacement.src);
+    withPath = normalize(fileReplacement.replaceWith);
+  } else if (fileReplacement.replace && fileReplacement.with) {
+    replacePath = normalize(fileReplacement.replace);
+    withPath = normalize(fileReplacement.with);
   } else {
-    replacePath = normalize(currentFormat.replace);
-    withPath = normalize(currentFormat.with);
+    throw new Error(`Invalid file replacement: ${JSON.stringify(fileReplacement)}`);
   }
 
   // TODO: For 7.x should this only happen if not absolute?

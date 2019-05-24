@@ -7,39 +7,55 @@
  */
 // tslint:disable
 // TODO: cleanup this file, it's copied as is from Angular CLI.
-import { virtualFs } from '@angular-devkit/core';
-import { Stats } from 'fs';
 import * as path from 'path';
 import {
   AngularCompilerPlugin,
   AngularCompilerPluginOptions,
+  NgToolsLoader,
   PLATFORM
 } from '@ngtools/webpack';
 import { buildOptimizerLoader } from './common';
-import { WebpackConfigOptions } from '../build-options';
+import { WebpackConfigOptions, BuildOptions } from '../build-options';
 
+function _pluginOptionsOverrides(
+  buildOptions: BuildOptions,
+  pluginOptions: AngularCompilerPluginOptions
+): AngularCompilerPluginOptions {
+  const compilerOptions = {
+    ...(pluginOptions.compilerOptions || {})
+  }
 
-const g: any = typeof global !== 'undefined' ? global : {};
-const webpackLoader: string = g['_DevKitIsLocal']
-  ? require.resolve('@ngtools/webpack')
-  : '@ngtools/webpack';
+  const hostReplacementPaths: { [replace: string]: string } = {};
+  if (buildOptions.fileReplacements) {
+    for (const replacement of buildOptions.fileReplacements) {
+      hostReplacementPaths[replacement.replace] = replacement.with;
+    }
+  }
 
+  if (buildOptions.scriptTargetOverride) {
+    compilerOptions.target = buildOptions.scriptTargetOverride;
+  }
+
+  if (buildOptions.preserveSymlinks) {
+    compilerOptions.preserveSymlinks = true;
+  }
+
+  return {
+    ...pluginOptions,
+    hostReplacementPaths,
+    compilerOptions
+  };
+}
 
 function _createAotPlugin(
   wco: WebpackConfigOptions,
   options: any,
-  _host: virtualFs.Host<Stats>,
   useMain = true,
   extract = false,
 ) {
   const { root, buildOptions } = wco;
-  options.compilerOptions = options.compilerOptions || {};
 
-  if (wco.buildOptions.preserveSymlinks) {
-    options.compilerOptions.preserveSymlinks = true;
-  }
-
-  let i18nInFile = buildOptions.i18nFile
+  const i18nInFile = buildOptions.i18nFile
     ? path.resolve(root, buildOptions.i18nFile)
     : undefined;
 
@@ -62,22 +78,14 @@ function _createAotPlugin(
     }
   }
 
-  const hostReplacementPaths: { [replace: string]: string } = {};
-  if (buildOptions.fileReplacements) {
-    for (const replacement of buildOptions.fileReplacements) {
-      hostReplacementPaths[replacement.replace] = replacement.with;
-    }
-  }
-
-  const pluginOptions: AngularCompilerPluginOptions = {
+  let pluginOptions: AngularCompilerPluginOptions = {
     mainPath: useMain ? path.join(root, buildOptions.main) : undefined,
     ...i18nFileAndFormat,
     locale: buildOptions.i18nLocale,
     platform: buildOptions.platform === 'server' ? PLATFORM.Server : PLATFORM.Browser,
     missingTranslation: buildOptions.i18nMissingTranslation,
-    sourceMap: buildOptions.sourceMap,
+    sourceMap: buildOptions.sourceMap.scripts,
     additionalLazyModules,
-    hostReplacementPaths,
     nameLazyFiles: buildOptions.namedChunks,
     forkTypeChecker: buildOptions.forkTypeChecker,
     contextElementDependencyConstructor: require('webpack/lib/dependencies/ContextElementDependency'),
@@ -85,30 +93,29 @@ function _createAotPlugin(
     directTemplateLoading: true,
     ...options,
   };
+
+  pluginOptions = _pluginOptionsOverrides(buildOptions, pluginOptions);
+
   return new AngularCompilerPlugin(pluginOptions);
 }
 
-export function getNonAotConfig(wco: WebpackConfigOptions, host: virtualFs.Host<Stats>) {
+export function getNonAotConfig(wco: WebpackConfigOptions) {
   const { tsConfigPath } = wco;
 
   return {
-    module: { rules: [{ test: /\.tsx?$/, loader: webpackLoader }] },
-    plugins: [_createAotPlugin(wco, { tsConfigPath, skipCodeGeneration: true }, host)]
+    module: { rules: [{ test: /\.tsx?$/, loader: NgToolsLoader }] },
+    plugins: [_createAotPlugin(wco, { tsConfigPath, skipCodeGeneration: true })]
   };
 }
 
-export function getAotConfig(
-  wco: WebpackConfigOptions,
-  host: virtualFs.Host<Stats>,
-  extract = false
-) {
+export function getAotConfig(wco: WebpackConfigOptions, extract = false) {
   const { tsConfigPath, buildOptions } = wco;
 
-  const loaders: any[] = [webpackLoader];
+  const loaders: any[] = [NgToolsLoader];
   if (buildOptions.buildOptimizer) {
     loaders.unshift({
       loader: buildOptimizerLoader,
-      options: { sourceMap: buildOptions.sourceMap }
+      options: { sourceMap: buildOptions.sourceMap.scripts }
     });
   }
 
@@ -116,15 +123,29 @@ export function getAotConfig(
 
   return {
     module: { rules: [{ test, use: loaders }] },
-    plugins: [_createAotPlugin(wco, { tsConfigPath }, host, true, extract)]
+    plugins: [_createAotPlugin(wco, { tsConfigPath }, true, extract)]
   };
 }
 
-export function getNonAotTestConfig(wco: WebpackConfigOptions, host: virtualFs.Host<Stats>) {
-  const { tsConfigPath } = wco;
+export function getTypescriptWorkerPlugin(wco: WebpackConfigOptions, workerTsConfigPath: string) {
+  const { buildOptions } = wco;
 
-  return {
-    module: { rules: [{ test: /\.tsx?$/, loader: webpackLoader }] },
-    plugins: [_createAotPlugin(wco, { tsConfigPath, skipCodeGeneration: true }, host, false)]
+  let pluginOptions: AngularCompilerPluginOptions = {
+    skipCodeGeneration: true,
+    tsConfigPath: workerTsConfigPath,
+    mainPath: undefined,
+    platform: PLATFORM.Browser,
+    sourceMap: buildOptions.sourceMap.scripts,
+    forkTypeChecker: buildOptions.forkTypeChecker,
+    contextElementDependencyConstructor: require('webpack/lib/dependencies/ContextElementDependency'),
+    logger: wco.logger,
+    // Run no transformers.
+    platformTransformers: [],
+    // Don't attempt lazy route discovery.
+    discoverLazyRoutes: false,
   };
+
+  pluginOptions = _pluginOptionsOverrides(buildOptions, pluginOptions);
+
+  return new AngularCompilerPlugin(pluginOptions);
 }

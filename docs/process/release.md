@@ -49,13 +49,11 @@ Consider if you need to update `packages/schematics/angular/utility/latest-versi
 
 ## Shepparding
 
-As commits are cherry-picked when PRs are merged, creating the release should be a matter of updating the version
-numbers. This can be done with the following command.
+As commits are cherry-picked when PRs are merged, creating the release should be a matter of creating a tag.
 
-See `scripts/release.ts` for the full list of release types, e.g. patch updates the third number per semver.
+**Make sure you update the package versions in `packages/schematics/angular/utility/latest-versions.ts`.**
 
 ```bash
-devkit-admin release patch --force # replace with minor-beta etc.
 git commit -a -m 'release: vXX'
 git tag 'vXX'
 git push upstream && git push upstream --tags
@@ -76,6 +74,24 @@ Check out the minor tag (e.g. `v6.8.0-beta.0`), then run:
 ```bash
 devkit-admin publish --tag next
 ```
+
+### Microsite Publishing
+
+**This can ONLY be done by a Google employee.**
+
+**You will need firebase access to our cli-angular-io firebase site. If you don't have it, escalate.**
+
+Check out if changes were made to the microsite:
+
+```sh
+git log v8.0.0-beta.0..HEAD --oneline etc/cli.angular.io | wc -l
+```
+
+If the number is 0 you can ignore the rest of this section.
+
+To publish, go to the `etc/cli.angular.io` directory and run `firebase deploy`. You might have to `firebase login` first. If you don't have the firebase CLI installed, you can install it using `npm install --global firebase-tools` (or use your package manager of choice).
+
+This is detailed in `etc/cli.angular.io/README.md`.
 
 ### Release Notes
 

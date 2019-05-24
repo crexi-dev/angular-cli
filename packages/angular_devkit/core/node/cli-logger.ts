@@ -19,25 +19,25 @@ export function createConsoleLogger(
   verbose = false,
   stdout: ProcessOutput = process.stdout,
   stderr: ProcessOutput = process.stderr,
+  colors?: Partial<Record<logging.LogLevel, (s: string) => string>>,
 ): logging.Logger {
   const logger = new logging.IndentLogger('cling');
 
   logger
     .pipe(filter(entry => (entry.level != 'debug' || verbose)))
     .subscribe(entry => {
-      let color: (s: string) => string = x => terminal.dim(terminal.white(x));
+      let color = colors && colors[entry.level];
       let output = stdout;
       switch (entry.level) {
         case 'info':
-          color = terminal.white;
           break;
         case 'warn':
-          color = (x: string) => terminal.bold(terminal.yellow(x));
+          color = color || (s => terminal.bold(terminal.yellow(s)));
           output = stderr;
           break;
         case 'fatal':
         case 'error':
-          color = (x: string) => terminal.bold(terminal.red(x));
+          color = color || (s => terminal.bold(terminal.red(s)));
           output = stderr;
           break;
       }
@@ -66,7 +66,7 @@ export function createConsoleLogger(
       while (message) {
         const chunk = message.slice(0, chunkSize);
         message = message.slice(chunkSize);
-        output.write(color(chunk));
+        output.write(color ? color(chunk) : chunk);
       }
       output.write('\n');
     });

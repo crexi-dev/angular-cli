@@ -4,10 +4,9 @@
 # found in the LICENSE file at https://angular.io/license
 package(default_visibility = ["//visibility:public"])
 
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_library")
+load("@npm_bazel_typescript//:defs.bzl", "ts_library")
 
 licenses(["notice"])  # MIT License
-
 
 # @angular-devkit/schematics-cli
 
@@ -29,10 +28,9 @@ ts_library(
         "//packages/angular_devkit/schematics",
         "//packages/angular_devkit/schematics:tasks",
         "//packages/angular_devkit/schematics:tools",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/inquirer",
         "@npm//@types/minimist",
         "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )

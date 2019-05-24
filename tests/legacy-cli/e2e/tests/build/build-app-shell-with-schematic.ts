@@ -7,22 +7,15 @@ import { readNgVersion } from '../../utils/version';
 
 
 export default function () {
-  // Skip this in ejected tests.
-  if (getGlobalVariable('argv').eject) {
-    return Promise.resolve();
-  }
-
   // Skip this test in Angular 2/4.
   if (getGlobalVariable('argv').ng2 || getGlobalVariable('argv').ng4) {
     return Promise.resolve();
   }
 
   let platformServerVersion = readNgVersion();
-  let httpVersion = readNgVersion();
 
   if (getGlobalVariable('argv')['ng-snapshots']) {
     platformServerVersion = 'github:angular/platform-server-builds';
-    httpVersion = 'github:angular/http-builds';
   }
 
 
@@ -35,8 +28,6 @@ export default function () {
     .then(() => updateJsonFile('package.json', packageJson => {
       const dependencies = packageJson['dependencies'];
       dependencies['@angular/platform-server'] = platformServerVersion;
-      // ServerModule depends on @angular/http regardless the app's dependency.
-      dependencies['@angular/http'] = httpVersion;
     })
     .then(() => npm('install'))
     .then(() => ng('build', '--optimization'))

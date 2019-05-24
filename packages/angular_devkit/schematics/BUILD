@@ -4,8 +4,12 @@
 # found in the LICENSE file at https://angular.io/license
 package(default_visibility = ["//visibility:public"])
 
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_library")
-load("@build_bazel_rules_nodejs//:defs.bzl", "jasmine_node_test")
+load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
+load("@npm_bazel_typescript//:defs.bzl", "ts_library")
+
+# @external_begin
+load("@build_bazel_rules_nodejs//:defs.bzl", "npm_package")
+# @external_end
 
 licenses(["notice"])  # MIT License
 
@@ -23,50 +27,45 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics",
     module_root = "src/index.d.ts",
-    # strict_checks = False,
     deps = [
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",  # TODO: get rid of this for 6.0
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )
 
 ts_library(
     name = "schematics_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "src/**/*_spec.ts",
             "src/**/*_spec_large.ts",
         ],
     ),
+    # @external_begin
+    tsconfig = "//:tsconfig-test.json",
+    # @external_end
     deps = [
         ":schematics",
         ":testing",
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",
-        "@rxjs",
-        "@rxjs//operators",
-        "@npm//@types/node",
         "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//rxjs",
     ],
-    testonly = True,
-    # @external_begin
-    tsconfig = "//:tsconfig-test.json",
-    # @external_end
 )
 
 jasmine_node_test(
     name = "schematics_test",
     srcs = [":schematics_test_lib"],
     deps = [
-        "@npm//chokidar",
         "@npm//jasmine",
         "@npm//source-map",
     ],
 )
-
 
 # @angular-devkit/schematics/tasks
 
@@ -83,16 +82,14 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics/tasks",
     module_root = "tasks/index.d.ts",
-    # strict_checks = False,
     deps = [
         ":schematics",
+        "//packages/angular_devkit/core",
+        "//packages/angular_devkit/core:node",
         "@npm//@types/node",
+        "@npm//rxjs",
         "@npm//tslint",
         "@npm//typescript",
-        "@rxjs",
-        "@rxjs//operators",
-        "//packages/angular_devkit/core:node",
-        "//packages/angular_devkit/core",
     ],
 )
 
@@ -109,20 +106,19 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics/tasks/node",
     module_root = "tasks/node/index.d.ts",
-    # strict_checks = False,
     deps = [
         ":schematics",
         ":tasks",
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )
 
 ts_library(
     name = "tasks_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "tasks/**/*_spec.ts",
@@ -134,24 +130,21 @@ ts_library(
         "tasks/tslint-fix/test/collection.json",
         "tasks/tslint-fix/test/rules/customRuleRule.js",
     ],
-    deps = [
-        ":tasks",
-        ":testing",
-        ":schematics",
-        "//packages/angular_devkit/core",
-        "//packages/angular_devkit/core:node",
-        "//packages/angular_devkit/core:node_testing",
-        "@rxjs",
-        "@rxjs//operators",
-        "@npm//@types/node",
-        "@npm//@types/jasmine",
-    ],
-    testonly = True,
     # @external_begin
     tsconfig = "//:tsconfig-test.json",
     # @external_end
+    deps = [
+        ":schematics",
+        ":tasks",
+        ":testing",
+        "//packages/angular_devkit/core",
+        "//packages/angular_devkit/core:node",
+        "//packages/angular_devkit/core:node_testing",
+        "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//rxjs",
+    ],
 )
-
 
 jasmine_node_test(
     name = "tasks_test",
@@ -159,10 +152,8 @@ jasmine_node_test(
     deps = [
         "@npm//jasmine",
         "@npm//source-map",
-        "@npm//chokidar",
     ],
 )
-
 
 # @angular-devkit/schematics/tools
 
@@ -178,21 +169,20 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics/tools",
     module_root = "tools/index.d.ts",
-    # strict_checks = False,
     deps = [
         ":schematics",
         ":tasks",
         ":tasks_node",
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )
 
 ts_library(
     name = "tools_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "tools/**/*_spec.ts",
@@ -200,23 +190,21 @@ ts_library(
             "tools/test/**/*.ts",
         ],
     ),
-    deps = [
-        ":tools",
-        ":tasks",
-        ":schematics",
-        ":testing",
-        "//packages/angular_devkit/core",
-        "//packages/angular_devkit/core:node",
-        "//tests/angular_devkit/schematics/tools/file-system-engine-host:file_system_engine_host_test_lib",
-        "@rxjs",
-        "@rxjs//operators",
-        "@npm//@types/node",
-        "@npm//@types/jasmine",
-    ],
-    testonly = True,
     # @external_begin
     tsconfig = "//:tsconfig-test.json",
     # @external_end
+    deps = [
+        ":schematics",
+        ":tasks",
+        ":testing",
+        ":tools",
+        "//packages/angular_devkit/core",
+        "//packages/angular_devkit/core:node",
+        "//tests/angular_devkit/schematics/tools/file-system-engine-host:file_system_engine_host_test_lib",
+        "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//rxjs",
+    ],
 )
 
 jasmine_node_test(
@@ -225,10 +213,8 @@ jasmine_node_test(
     deps = [
         "@npm//jasmine",
         "@npm//source-map",
-        "@npm//chokidar",
     ],
 )
-
 
 # @angular-devkit/schematics/testing
 
@@ -245,8 +231,19 @@ ts_library(
         ":tasks_node",
         ":tools",
         "//packages/angular_devkit/core",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )
+
+# @external_begin
+npm_package(
+    name = "npm_package",
+    deps = [
+        ":schematics",
+        ":tasks",
+        ":testing",
+        ":tools",
+    ],
+)
+# @external_end

@@ -5,24 +5,32 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+import { tags } from '@angular-devkit/core';
 import * as CopyWebpackPlugin from 'copy-webpack-plugin';
 import * as path from 'path';
-import { HashedModuleIdsPlugin, debug } from 'webpack';
-import { AssetPatternObject } from '../../../browser/schema';
+import { ScriptTarget } from 'typescript';
+import {
+  Compiler,
+  Configuration,
+  ContextReplacementPlugin,
+  HashedModuleIdsPlugin,
+  Output,
+  debug,
+} from 'webpack';
+import { RawSource } from 'webpack-sources';
+import { AssetPatternClass } from '../../../browser/schema';
+import { isEs5SupportNeeded } from '../../../utils/differential-loading';
 import { BundleBudgetPlugin } from '../../plugins/bundle-budget';
 import { CleanCssWebpackPlugin } from '../../plugins/cleancss-webpack-plugin';
+import { NamedLazyChunksPlugin } from '../../plugins/named-chunks-plugin';
 import { ScriptsWebpackPlugin } from '../../plugins/scripts-webpack-plugin';
-import { findUp } from '../../utilities/find-up';
-import { isDirectory } from '../../utilities/is-directory';
-import { requireProjectModule } from '../../utilities/require-project-module';
+import { findAllNodeModules, findUp } from '../../utilities/find-up';
 import { WebpackConfigOptions } from '../build-options';
-import { getOutputHashFormat, normalizeExtraEntryPoints } from './utils';
+import { getEsVersionForFileName, getOutputHashFormat, normalizeExtraEntryPoints } from './utils';
 
 const ProgressPlugin = require('webpack/lib/ProgressPlugin');
 const CircularDependencyPlugin = require('circular-dependency-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
-const StatsPlugin = require('stats-webpack-plugin');
-
 
 // tslint:disable-next-line:no-any
 const g: any = typeof global !== 'undefined' ? global : {};
@@ -31,8 +39,14 @@ export const buildOptimizerLoader: string = g['_DevKitIsLocal']
   : '@angular-devkit/build-optimizer/webpack-loader';
 
 // tslint:disable-next-line:no-big-function
-export function getCommonConfig(wco: WebpackConfigOptions) {
+export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
   const { root, projectRoot, buildOptions } = wco;
+  const { styles: stylesOptimization, scripts: scriptsOptimization } = buildOptions.optimization;
+  const {
+    styles: stylesSourceMap,
+    scripts: scriptsSourceMap,
+    vendor: vendorSourceMap,
+  } = buildOptions.sourceMap;
 
   const nodeModules = findUp('node_modules', projectRoot);
   if (!nodeModules) {
@@ -43,12 +57,44 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
   const extraPlugins: any[] = [];
   const entryPoints: { [key: string]: string[] } = {};
 
+  const targetInFileName = getEsVersionForFileName(
+    buildOptions.scriptTargetOverride,
+    buildOptions.esVersionInFileName,
+  );
+
   if (buildOptions.main) {
     entryPoints['main'] = [path.resolve(root, buildOptions.main)];
   }
 
+  const es5Polyfills = path.join(__dirname, '..', 'es5-polyfills.js');
+  const es5JitPolyfills = path.join(__dirname, '..', 'es5-jit-polyfills.js');
+
+  if (targetInFileName) {
+    // For differential loading we don't need to have 2 polyfill bundles
+    if (buildOptions.scriptTargetOverride === ScriptTarget.ES2015) {
+      entryPoints['polyfills'] = [path.join(__dirname, '..', 'safari-nomodule.js')];
+    } else {
+      entryPoints['polyfills'] = [es5Polyfills];
+      if (!buildOptions.aot) {
+        entryPoints['polyfills'].push(es5JitPolyfills);
+      }
+    }
+  } else {
+    // For NON differential loading we want to have 2 polyfill bundles
+    if (buildOptions.es5BrowserSupport
+      || (buildOptions.es5BrowserSupport === undefined && isEs5SupportNeeded(projectRoot))) {
+      entryPoints['polyfills-es5'] = [es5Polyfills];
+      if (!buildOptions.aot) {
+        entryPoints['polyfills-es5'].push(es5JitPolyfills);
+      }
+    }
+  }
+
   if (buildOptions.polyfills) {
-    entryPoints['polyfills'] = [path.resolve(root, buildOptions.polyfills)];
+    entryPoints['polyfills'] = [
+      ...(entryPoints['polyfills'] || []),
+      path.resolve(root, buildOptions.polyfills),
+    ];
   }
 
   if (!buildOptions.aot) {
@@ -58,9 +104,9 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
     ];
   }
 
-  if (buildOptions.profile) {
+  if (buildOptions.profile || process.env['NG_BUILD_PROFILING']) {
     extraPlugins.push(new debug.ProfilingPlugin({
-      outputPath: path.resolve(root, 'chrome-profiler-events.json'),
+      outputPath: path.resolve(root, `chrome-profiler-events${targetInFileName}.json`),
     }));
   }
 
@@ -81,12 +127,11 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
           }
 
           existingEntry.paths.push(resolvedPath);
-
         } else {
           prev.push({
             bundleName,
             paths: [resolvedPath],
-            lazy: curr.lazy,
+            lazy: curr.lazy || false,
           });
         }
 
@@ -102,7 +147,7 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
 
       extraPlugins.push(new ScriptsWebpackPlugin({
         name: bundleName,
-        sourceMap: buildOptions.sourceMap,
+        sourceMap: scriptsSourceMap,
         filename: `${path.basename(bundleName)}${hash}.js`,
         scripts: script.paths,
         basePath: projectRoot,
@@ -112,7 +157,7 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
 
   // process asset entries
   if (buildOptions.assets) {
-    const copyWebpackPluginPatterns = buildOptions.assets.map((asset: AssetPatternObject) => {
+    const copyWebpackPluginPatterns = buildOptions.assets.map((asset: AssetPatternClass) => {
 
       // Resolve input paths relative to workspace root and add slash at the end.
       asset.input = path.resolve(root, asset.input).replace(/\\/g, '/');
@@ -144,21 +189,32 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
   }
 
   if (buildOptions.progress) {
-    extraPlugins.push(new ProgressPlugin({ profile: buildOptions.verbose, colors: true }));
+    extraPlugins.push(new ProgressPlugin({ profile: buildOptions.verbose }));
   }
 
   if (buildOptions.showCircularDependencies) {
     extraPlugins.push(new CircularDependencyPlugin({
-      exclude: /[\\\/]node_modules[\\\/]/,
+      exclude: /([\\\/]node_modules[\\\/])|(ngfactory\.js$)/,
     }));
   }
 
   if (buildOptions.statsJson) {
-    extraPlugins.push(new StatsPlugin('stats.json', 'verbose'));
+    extraPlugins.push(new class {
+      apply(compiler: Compiler) {
+        compiler.hooks.emit.tap('angular-cli-stats', compilation => {
+          const data = JSON.stringify(compilation.getStats().toJson('verbose'));
+          compilation.assets[`stats${targetInFileName}.json`] = new RawSource(data);
+        });
+      }
+    });
+  }
+
+  if (buildOptions.namedChunks) {
+    extraPlugins.push(new NamedLazyChunksPlugin());
   }
 
   let sourceMapUseRule;
-  if (buildOptions.sourceMap && buildOptions.vendorSourceMap) {
+  if ((scriptsSourceMap || stylesSourceMap) && vendorSourceMap) {
     sourceMapUseRule = {
       use: [
         {
@@ -174,7 +230,7 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
       use: [
         {
           loader: buildOptimizerLoader,
-          options: { sourceMap: buildOptions.sourceMap },
+          options: { sourceMap: scriptsSourceMap },
         },
       ],
     };
@@ -183,59 +239,97 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
   // Allow loaders to be in a node_modules nested inside the devkit/build-angular package.
   // This is important in case loaders do not get hoisted.
   // If this file moves to another location, alter potentialNodeModules as well.
-  const loaderNodeModules = ['node_modules'];
-  const buildAngularNodeModules = findUp('node_modules', __dirname);
-  if (buildAngularNodeModules
-    && isDirectory(buildAngularNodeModules)
-    && buildAngularNodeModules !== nodeModules
-    && buildAngularNodeModules.startsWith(nodeModules)
-  ) {
-    loaderNodeModules.push(buildAngularNodeModules);
-  }
+  const loaderNodeModules = findAllNodeModules(__dirname, projectRoot);
+  loaderNodeModules.unshift('node_modules');
 
   // Load rxjs path aliases.
-  // https://github.com/ReactiveX/rxjs/blob/master/doc/lettable-operators.md#build-and-treeshaking
+  // https://github.com/ReactiveX/rxjs/blob/master/doc/pipeable-operators.md#build-and-treeshaking
   let alias = {};
   try {
     const rxjsPathMappingImport = wco.supportES2015
       ? 'rxjs/_esm2015/path-mapping'
       : 'rxjs/_esm5/path-mapping';
-    const rxPaths = requireProjectModule(projectRoot, rxjsPathMappingImport);
+    const rxPaths = require(require.resolve(rxjsPathMappingImport, { paths: [projectRoot] }));
     alias = rxPaths(nodeModules);
   } catch { }
 
-  const terserOptions = {
-    ecma: wco.supportES2015 ? 6 : 5,
-    warnings: !!buildOptions.verbose,
-    safari10: true,
-    output: {
-      ascii_only: true,
-      comments: false,
-      webkit: true,
-    },
+  const extraMinimizers = [];
+  if (stylesOptimization) {
+    extraMinimizers.push(
+      new CleanCssWebpackPlugin({
+        sourceMap: stylesSourceMap,
+        // component styles retain their original file name
+        test: (file) => /\.(?:css|scss|sass|less|styl)$/.test(file),
+      }),
+    );
+  }
 
-    // On server, we don't want to compress anything. We still set the ngDevMode = false for it
-    // to remove dev code.
-    compress: (buildOptions.platform == 'server' ? {
-      global_defs: {
-        ngDevMode: false,
+  if (scriptsOptimization) {
+    let angularGlobalDefinitions = {
+      ngDevMode: false,
+      ngI18nClosureMode: false,
+    };
+
+    try {
+      // Try to load known global definitions from @angular/compiler-cli.
+      // tslint:disable-next-line:no-implicit-dependencies
+      const GLOBAL_DEFS_FOR_TERSER = require('@angular/compiler-cli').GLOBAL_DEFS_FOR_TERSER;
+      if (GLOBAL_DEFS_FOR_TERSER) {
+        angularGlobalDefinitions = GLOBAL_DEFS_FOR_TERSER;
+      }
+    } catch {
+      // Do nothing, the default above will be used instead.
+    }
+
+    const terserOptions = {
+      ecma: wco.supportES2015 ? 6 : 5,
+      warnings: !!buildOptions.verbose,
+      safari10: true,
+      output: {
+        ascii_only: true,
+        comments: false,
+        webkit: true,
       },
-    } : {
-      pure_getters: buildOptions.buildOptimizer,
-      // PURE comments work best with 3 passes.
-      // See https://github.com/webpack/webpack/issues/2899#issuecomment-317425926.
-      passes: buildOptions.buildOptimizer ? 3 : 1,
-      global_defs: {
-        ngDevMode: false,
-      },
-    }),
-    // We also want to avoid mangling on server.
-    ...(buildOptions.platform == 'server' ? { mangle: false } : {}),
-  };
+      // On server, we don't want to compress anything. We still set the ngDevMode = false for it
+      // to remove dev code, and ngI18nClosureMode to remove Closure compiler i18n code
+      compress: (buildOptions.platform == 'server' ? {
+        global_defs: angularGlobalDefinitions,
+      } : {
+          pure_getters: buildOptions.buildOptimizer,
+          // PURE comments work best with 3 passes.
+          // See https://github.com/webpack/webpack/issues/2899#issuecomment-317425926.
+          passes: buildOptions.buildOptimizer ? 3 : 1,
+          global_defs: angularGlobalDefinitions,
+        }),
+      // We also want to avoid mangling on server.
+      ...(buildOptions.platform == 'server' ? { mangle: false } : {}),
+    };
+
+    extraMinimizers.push(
+      new TerserPlugin({
+        sourceMap: scriptsSourceMap,
+        parallel: true,
+        cache: true,
+        terserOptions,
+      }),
+    );
+  }
+
+  if (wco.tsConfig.options.target !== undefined &&
+    wco.tsConfig.options.target >= ScriptTarget.ES2017) {
+    wco.logger.warn(tags.stripIndent`
+      WARNING: Zone.js does not support native async/await in ES2017.
+      These blocks are not intercepted by zone.js and will not triggering change detection.
+      See: https://github.com/angular/zone.js/pull/1140 for more information.
+    `);
+  }
 
   return {
-    mode: buildOptions.optimization ? 'production' : 'development',
+    mode: scriptsOptimization || stylesOptimization
+      ? 'production'
+      : 'development',
     devtool: false,
+    profile: buildOptions.statsJson,
     resolve: {
       extensions: ['.ts', '.tsx', '.mjs', '.js'],
       symlinks: !buildOptions.preserveSymlinks,
@@ -251,10 +345,12 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
     context: projectRoot,
     entry: entryPoints,
     output: {
+      futureEmitAssets: true,
       path: path.resolve(root, buildOptions.outputPath as string),
       publicPath: buildOptions.deployUrl,
-      filename: `[name]${hashFormat.chunk}.js`,
-    },
+      filename: `[name]${targetInFileName}${hashFormat.chunk}.js`,
+      // cast required until typings include `futureEmitAssets` property
+    } as Output,
     watch: buildOptions.watch,
     watchOptions: {
       poll: buildOptions.poll,
@@ -263,8 +359,9 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
       hints: false,
     },
     module: {
+      // Show an error for missing exports instead of a warning.
+      strictExportPresence: true,
       rules: [
-        { test: /\.html$/, loader: 'raw-loader' },
         {
           test: /\.(eot|svg|cur|jpg|png|webp|gif|otf|ttf|woff|woff2|ani)$/,
           loader: 'file-loader',
@@ -296,19 +393,15 @@ export function getCommonConfig(wco: WebpackConfigOptions) {
         new HashedModuleIdsPlugin(),
         // TODO: check with Mike what this feature needs.
         new BundleBudgetPlugin({ budgets: buildOptions.budgets }),
-        new CleanCssWebpackPlugin({
-          sourceMap: buildOptions.sourceMap,
-          // component styles retain their original file name
-          test: (file) => /\.(?:css|scss|sass|less|styl)$/.test(file),
-        }),
-        new TerserPlugin({
-          sourceMap: buildOptions.sourceMap,
-          parallel: true,
-          cache: true,
-          terserOptions,
-        }),
+        ...extraMinimizers,
       ],
     },
-    plugins: extraPlugins,
+    plugins: [
+      // Always replace the context for the System.import in angular/core to prevent warnings.
+      // https://github.com/angular/angular/issues/11580
+      // With VE the correct context is added in @ngtools/webpack, but Ivy doesn't need it at all.
+      new ContextReplacementPlugin(/\@angular(\\|\/)core(\\|\/)/),
+      ...extraPlugins,
+    ],
   };
 }

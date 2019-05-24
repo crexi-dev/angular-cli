@@ -4,8 +4,12 @@
 # found in the LICENSE file at https://angular.io/license
 package(default_visibility = ["//visibility:public"])
 
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_library")
-load("@build_bazel_rules_nodejs//:defs.bzl", "jasmine_node_test")
+load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
+load("@npm_bazel_typescript//:defs.bzl", "ts_library")
+
+# @external_begin
+load("@build_bazel_rules_nodejs//:defs.bzl", "npm_package")
+# @external_end
 
 licenses(["notice"])  # MIT License
 
@@ -21,16 +25,17 @@ ts_library(
             "src/**/*_benchmark.ts",
         ],
     ),
-    data = glob(["**/*.json"]),
+    data = glob(["**/*.json"]) + [
+        "//packages/angular_devkit/core/third_party/github.com/chalk/supports-color",
+    ],
     module_name = "@angular-devkit/core",
     module_root = "src/index.d.ts",
-    # strict_checks = False,
     deps = [
-        "@rxjs",
-        "@rxjs//operators",
+        "@npm//rxjs",
         "@npm//@types/node",
         "@npm//@types/source-map",
         "@npm//ajv",
+        "@npm//magic-string",
         # @typings: es2015.core
         # @typings: es2015.symbol.wellknown
         # @typings: es2016.array.include
@@ -39,29 +44,27 @@ ts_library(
 
 ts_library(
     name = "core_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "src/**/*_spec.ts",
             "src/**/*_spec_large.ts",
         ],
     ),
-    # strict_checks = False,
-    deps = [
-        ":core",
-        ":node",
-        "@rxjs",
-        "@rxjs//operators",
-        "@npm//@types/node",
-        "@npm//@types/jasmine",
-    ],
     data = [
-        "src/workspace/workspace-schema.json",
-        "src/workspace/test/test-workspace.json"
+        "src/experimental/workspace/test/test-workspace.json",
+        "src/experimental/workspace/workspace-schema.json",
     ],
-    testonly = True,
     # @external_begin
     tsconfig = "//:tsconfig-test.json",
     # @external_end
+    deps = [
+        ":core",
+        ":node",
+        "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//rxjs",
+    ],
 )
 
 jasmine_node_test(
@@ -70,10 +73,8 @@ jasmine_node_test(
     deps = [
         "@npm//jasmine",
         "@npm//source-map",
-        "@npm//chokidar",
     ],
 )
-
 
 # @angular-devkit/core/node
 
@@ -92,46 +93,44 @@ ts_library(
     module_root = "node/index.d.ts",
     deps = [
         ":core",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )
 
 ts_library(
     name = "node_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "node/**/*_spec.ts",
             "node/**/*_spec_large.ts",
         ],
     ),
-    deps = [
-        ":core",
-        ":node",
-        "@rxjs",
-        "@rxjs//operators",
-        "@npm//@types/node",
-        "@npm//@types/jasmine",
-    ],
-    testonly = True,
     # @external_begin
     tsconfig = "//:tsconfig-test.json",
     # @external_end
+    deps = [
+        ":core",
+        ":node",
+        "//tests/angular_devkit/core/node/jobs:jobs_test_lib",
+        "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//rxjs",
+    ],
 )
 
 jasmine_node_test(
     name = "node_test",
     srcs = [":node_test_lib"],
     deps = [
-        "@npm//jasmine",
         "@npm//chokidar",
+        "@npm//jasmine",
         "@npm//source-map",
         "@npm//temp",
         "@npm//tslint",
     ],
 )
-
 
 # @angular-devkit/core/node/testing
 
@@ -147,13 +146,22 @@ ts_library(
     ),
     module_name = "@angular-devkit/core/node/testing",
     module_root = "node/testing/index.d.ts",
-    # strict_checks = False,
     deps = [
         ":core",
         ":node",
-        "@rxjs",
-        "@rxjs//operators",
-        "@npm//@types/node",
         "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//rxjs",
     ],
 )
+
+# @external_begin
+npm_package(
+    name = "npm_package",
+    deps = [
+        ":core",
+        ":node",
+        ":node_testing",
+    ],
+)
+# @external_end

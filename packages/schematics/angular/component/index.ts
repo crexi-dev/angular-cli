@@ -11,16 +11,15 @@ import {
   SchematicsException,
   Tree,
   apply,
-  branchAndMerge,
+  applyTemplates,
   chain,
   filter,
   mergeWith,
   move,
   noop,
-  template,
   url,
 } from '@angular-devkit/schematics';
-import * as ts from 'typescript';
+import * as ts from '../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 import {
   addDeclarationToModule,
   addEntryComponentToModule,
@@ -30,9 +29,9 @@ import { InsertChange } from '../utility/change';
 import { buildRelativePath, findModuleFromOptions } from '../utility/find-module';
 import { applyLintFix } from '../utility/lint-fix';
 import { parseName } from '../utility/parse-name';
-import { buildDefaultPath, getProject } from '../utility/project';
 import { validateHtmlSelector, validateName } from '../utility/validation';
-import { Schema as ComponentOptions } from './schema';
+import { buildDefaultPath, getWorkspace } from '../utility/workspace';
+import { Schema as ComponentOptions, Style } from './schema';
 
 function readIntoSourceFile(host: Tree, modulePath: string): ts.SourceFile {
   const text = host.read(modulePath);
@@ -125,32 +124,37 @@ function buildSelector(options: ComponentOptions, projectPrefix: string) {
 }
 
 
-export default function(options: ComponentOptions): Rule {
-  return (host: Tree) => {
-    if (!options.project) {
-      throw new SchematicsException('Option (project) is required.');
-    }
-    const project = getProject(host, options.project);
+export default function (options: ComponentOptions): Rule {
+  return async (host: Tree) => {
+    const workspace = await getWorkspace(host);
+    const project = workspace.projects.get(options.project as string);
 
-    if (options.path === undefined) {
+    if (options.path === undefined && project) {
       options.path = buildDefaultPath(project);
     }
 
     options.module = findModuleFromOptions(host, options);
 
-    const parsedPath = parseName(options.path, options.name);
+    const parsedPath = parseName(options.path as string, options.name);
     options.name = parsedPath.name;
     options.path = parsedPath.path;
-    options.selector = options.selector || buildSelector(options, project.prefix);
+    options.selector = options.selector || buildSelector(options, project && project.prefix || '');
+
+    // todo remove these when we remove the deprecations
+    options.style = (
+      options.style && options.style !== Style.Css
+        ? options.style : options.styleext as Style
+    ) || Style.Css;
+    options.skipTests = options.skipTests || !options.spec;
 
     validateName(options.name);
     validateHtmlSelector(options.selector);
 
     const templateSource = apply(url('./files'), [
-      options.spec ? noop() : filter(path => !path.endsWith('.spec.ts')),
-      options.inlineStyle ? filter(path => !path.endsWith('.__styleext__')) : noop(),
-      options.inlineTemplate ? filter(path => !path.endsWith('.html')) : noop(),
-      template({
+      options.skipTests ? filter(path => !path.endsWith('.spec.ts.template')) : noop(),
+      options.inlineStyle ? filter(path => !path.endsWith('.__style__.template')) : noop(),
+      options.inlineTemplate ? filter(path => !path.endsWith('.html.template')) : noop(),
+      applyTemplates({
         ...strings,
         'if-flat': (s: string) => options.flat ? '' : s,
         ...options,
@@ -159,10 +163,8 @@ export default function(options: ComponentOptions): Rule {
     ]);
 
     return chain([
-      branchAndMerge(chain([
-        addDeclarationToNgModule(options),
-        mergeWith(templateSource),
-      ])),
+      addDeclarationToNgModule(options),
+      mergeWith(templateSource),
       options.lintFix ? applyLintFix(options.path) : noop(),
     ]);
   };

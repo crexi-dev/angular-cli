@@ -5,54 +5,149 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+import { Architect } from '@angular-devkit/architect';
+import { OutputHashing } from '../../src/browser/schema';
+import { browserBuild, createArchitect, host } from '../utils';
 
-import { runTargetSpec } from '@angular-devkit/architect/testing';
-import { join, normalize, virtualFs } from '@angular-devkit/core';
-import { tap } from 'rxjs/operators';
-import { browserTargetSpec, host } from '../utils';
-
-
+// tslint:disable-next-line:no-big-function
 describe('Browser Builder source map', () => {
-  const outputPath = normalize('dist');
+  const target = { project: 'app', target: 'build' };
+  let architect: Architect;
 
-  beforeEach(done => host.initialize().toPromise().then(done, done.fail));
-  afterEach(done => host.restore().toPromise().then(done, done.fail));
+  beforeEach(async () => {
+    await host.initialize().toPromise();
+    architect = (await createArchitect(host.root())).architect;
+  });
+  afterEach(async () => host.restore().toPromise());
 
-  it('works', (done) => {
-    const overrides = { sourceMap: true };
+  it('works', async () => {
+    const overrides = {
+      sourceMap: true,
+      extractCss: true,
+      styles: ['src/styles.css'],
+    };
 
-    runTargetSpec(host, browserTargetSpec, overrides).pipe(
-      tap((buildEvent) => expect(buildEvent.success).toBe(true)),
-      tap(() => {
-        const fileName = join(outputPath, 'main.js.map');
-        expect(host.scopedSync().exists(fileName)).toBe(true);
-      }),
-    ).toPromise().then(done, done.fail);
+    host.writeMultipleFiles({
+      'src/styles.css': `div { flex: 1 }`,
+    });
+
+    const { files } = await browserBuild(architect, host, target, overrides);
+    expect(await files['main.js.map']).not.toBeUndefined();
+    expect(await files['styles.css.map']).not.toBeUndefined();
   });
 
-  it('does not output source map when disabled', (done) => {
-    const overrides = { sourceMap: false };
+  it('works with outputHashing', async () => {
+    const { files } = await browserBuild(architect, host, target, {
+      sourceMap: true,
+      outputHashing: OutputHashing.All,
+    });
 
-    runTargetSpec(host, browserTargetSpec, overrides).pipe(
-      tap((buildEvent) => expect(buildEvent.success).toBe(true)),
-      tap(() => {
-        const fileName = join(outputPath, 'main.js.map');
-        expect(host.scopedSync().exists(fileName)).toBe(false);
-      }),
-    ).toPromise().then(done, done.fail);
+    expect(Object.keys(files).some(name => /main\.[0-9a-f]{20}\.js.map/.test(name))).toBeTruthy();
   });
 
-  it('supports eval source map', (done) => {
-    const overrides = { sourceMap: true, evalSourceMap: true };
+  it('does not output source map when disabled', async () => {
+    const { files } = await browserBuild(architect, host, target, {
+      sourceMap: false,
+    });
 
-    runTargetSpec(host, browserTargetSpec, overrides).pipe(
-      tap((buildEvent) => expect(buildEvent.success).toBe(true)),
-      tap(() => {
-        expect(host.scopedSync().exists(join(outputPath, 'main.js.map'))).toBe(false);
-        const fileName = join(outputPath, 'main.js');
-        const content = virtualFs.fileBufferToString(host.scopedSync().read(fileName));
-        expect(content).toContain('eval("function webpackEmptyAsyncContext');
-      }),
-    ).toPromise().then(done, done.fail);
+    expect(files['main.js.map']).toBeUndefined();
+  });
+
+  it('supports eval source map', async () => {
+    const { files } = await browserBuild(architect, host, target, {
+      sourceMap: true, evalSourceMap: true,
+    });
+
+    expect(files['main.js.map']).toBeUndefined();
+    expect(await files['main.js']).toContain('eval("function webpackEmptyAsyncContext');
+  });
+
+  it('supports hidden sourcemaps', async () => {
+    const overrides = {
+      sourceMap: {
+        hidden: true,
+        styles: true,
+        scripts: true,
+      },
+      extractCss: true,
+      styles: ['src/styles.scss'],
+    };
+
+    host.writeMultipleFiles({
+      'src/styles.scss': `div { flex: 1 }`,
+    });
+
+    const { files } = await browserBuild(architect, host, target, overrides);
+    expect('main.js.map' in files).toBe(true);
+    expect('styles.css.map' in files).toBe(true);
+    expect(await files['main.js']).not.toContain('sourceMappingURL=main.js.map');
+    expect(await files['styles.css']).not.toContain('sourceMappingURL=styles.css.map');
+  });
+
+  it('supports styles only sourcemaps', async () => {
+    const overrides = {
+      sourceMap: {
+        styles: true,
+        scripts: false,
+      },
+      extractCss: true,
+      styles: ['src/styles.scss'],
+    };
+
+    host.writeMultipleFiles({
+      'src/styles.scss': `div { flex: 1 }`,
+    });
+
+    const { files } = await browserBuild(architect, host, target, overrides);
+    expect('main.js.map' in files).toBe(false);
+    expect('styles.css.map' in files).toBe(true);
+    expect(await files['main.js']).not.toContain('sourceMappingURL=main.js.map');
+    expect(await files['styles.css']).toContain('sourceMappingURL=styles.css.map');
+  });
+
+  it('supports scripts only sourcemaps', async () => {
+    const overrides = {
+      sourceMap: {
+        styles: false,
+        scripts: true,
+      },
+      extractCss: true,
+      styles: ['src/styles.scss'],
+    };
+
+    host.writeMultipleFiles({
+      'src/styles.scss': `div { flex: 1 }`,
+    });
+
+    const { files } = await browserBuild(architect, host, target, overrides);
+    expect('main.js.map' in files).toBe(true);
+    expect('styles.css.map' in files).toBe(false);
+    expect(await files['main.js']).toContain('sourceMappingURL=main.js.map');
+    expect(await files['styles.css']).not.toContain('sourceMappingURL=styles.css.map');
+  });
+
+  it('should not inline component styles sourcemaps when hidden', async () => {
+    const overrides = {
+      sourceMap: {
+        hidden: true,
+        styles: true,
+        scripts: true,
+      },
+      extractCss: true,
+      styles: ['src/styles.scss'],
+    };
+
+    host.writeMultipleFiles({
+      'src/styles.scss': `div { flex: 1 }`,
+      'src/app/app.component.css': `p { color: red; }`,
+    });
+
+    const { files } = await browserBuild(architect, host, target, overrides);
+    expect('main.js.map' in files).toBe(true);
+    expect('styles.css.map' in files).toBe(true);
+    expect(await files['main.js']).not.toContain('sourceMappingURL=main.js.map');
+    expect(await files['main.js']).not.toContain('sourceMappingURL=data:application/json');
+    expect(await files['styles.css']).not.toContain('sourceMappingURL=styles.css.map');
+    expect(await files['styles.css']).not.toContain('sourceMappingURL=data:application/json');
   });
 });

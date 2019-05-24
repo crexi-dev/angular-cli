@@ -141,4 +141,49 @@ describe('prefix-functions', () => {
       expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
     });
   });
+
+  it('doesn\'t add comment to downlevel arrow function', () => {
+    const input = tags.stripIndent`
+      var populate = (function (props, rawData, entity) {
+          props.forEach(function (prop) { });
+      });
+    `;
+    const output = tags.stripIndent`
+      ${input}
+    `;
+
+    expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
+  });
+
+  it('doesn\'t add comment inside arrow function', () => {
+    const input = tags.stripIndent`
+      const populate = ((props, rawData, entity) => {
+          props.forEach(x => x);
+      });
+    `;
+    const output = tags.stripIndent`
+      ${input}
+    `;
+
+    expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
+  });
+
+  it('doesn\'t add comment when inside class expression', () => {
+    const input = tags.stripIndent`
+      let Foo = class Foo {
+        constructor() {
+          this.isExpandedChange = new EventEmitter();
+        }
+
+        set isExpanded(value) {
+          this.isExpandedChange.emit(value);
+        }
+      };
+    `;
+    const output = tags.stripIndent`
+      ${input}
+    `;
+
+    expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
+  });
 });

@@ -9,7 +9,6 @@ import 'symbol-observable';
 // symbol polyfill must go first
 // tslint:disable-next-line:ordered-imports import-groups
 import { tags, terminal } from '@angular-devkit/core';
-import { resolve } from '@angular-devkit/core/node';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SemVer } from 'semver';
@@ -50,8 +49,8 @@ if (process.env['NG_CLI_PROFILING']) {
   try {
     profiler = require('v8-profiler-node8'); // tslint:disable-line:no-implicit-dependencies
   } catch (err) {
-    throw new Error(`Could not require 'v8-profiler-node8'. You must install it separetely with` +
-      `'npm install v8-profiler-node8 --no-save.\n\nOriginal error:\n\n${err}`);
+    throw new Error(`Could not require 'v8-profiler-node8'. You must install it separetely with ` +
+      `'npm install v8-profiler-node8 --no-save'.\n\nOriginal error:\n\n${err}`);
   }
 
   profiler.startProfiling();
@@ -77,14 +76,7 @@ if (process.env['NG_CLI_PROFILING']) {
 
 let cli;
 try {
-  const projectLocalCli = resolve(
-    '@angular/cli',
-    {
-      checkGlobal: false,
-      basedir: process.cwd(),
-      preserveSymlinks: true,
-    },
-  );
+  const projectLocalCli = require.resolve('@angular/cli', { paths: [process.cwd()] });
 
   // This was run from a global, check local version.
   const globalVersion = new SemVer(packageJson['version']);

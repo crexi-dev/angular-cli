@@ -1,0 +1,16 @@
+{
+  "description": "snapshot versions of Angular for e2e testing",
+  "private": true,
+  "dependencies": {
+    "@angular/animations": "github:angular/animations-builds#421ef090faf1f49604efba0444939db11f08130c",
+    "@angular/common": "github:angular/common-builds#fdb501a03169b4af2727ecfe9cf2ea51aea29bf2",
+    "@angular/compiler": "github:angular/compiler-builds#bb7e6ece56f2f8141e61a6083512b12c2106d1df",
+    "@angular/compiler-cli": "github:angular/compiler-cli-builds#ba4494fa4f4da1f90164e3b2b757e2f213c03821",
+    "@angular/core": "github:angular/core-builds#be71bbe4eb9fd3be315d5f22d6b2ffc3e3f287ce",
+    "@angular/forms": "github:angular/forms-builds#f01cff105563fd0f73ca0d0ed122d8eac4be4f94",
+    "@angular/language-service": "github:angular/language-service-builds#232a6a1fbb2beb9364a14f847d1490fce8f42fdf",
+    "@angular/platform-browser": "github:angular/platform-browser-builds#68e5d25b0b5db2c84a1b6f12650c029cd399f583",
+    "@angular/platform-browser-dynamic": "github:angular/platform-browser-dynamic-builds#35339ea39a9469a13e278e28c82a97d8d7be184c",
+    "@angular/router": "github:angular/router-builds#8938ec2932bb08040ab0b02f203155c03aab7835"
+  }
+}

@@ -6,6 +6,7 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import {
+  analytics,
   experimental,
   json,
   logging,
@@ -17,20 +18,11 @@ import {
   virtualFs,
 } from '@angular-devkit/core';
 import { NodeJsSyncHost } from '@angular-devkit/core/node';
-import {
-  DryRunEvent,
-  Engine,
-  SchematicEngine,
-  UnsuccessfulWorkflowExecution,
-  workflow,
-} from '@angular-devkit/schematics';
+import { DryRunEvent, UnsuccessfulWorkflowExecution, workflow } from '@angular-devkit/schematics';
 import {
   FileSystemCollection,
-  FileSystemCollectionDesc,
-  FileSystemEngineHostBase,
+  FileSystemEngine,
   FileSystemSchematic,
-  FileSystemSchematicDesc,
-  NodeModulesEngineHost,
   NodeWorkflow,
   validateOptionsWithSchema,
 } from '@angular-devkit/schematics/tools';
@@ -45,6 +37,8 @@ import {
 } from '../utilities/config';
 import { parseJsonSchemaToOptions } from '../utilities/json-schema';
 import { getPackageManager } from '../utilities/package-manager';
+import { isTTY } from '../utilities/tty';
+import { isPackageNameSafeForAnalytics } from './analytics';
 import { BaseCommandOptions, Command } from './command';
 import { Arguments, CommandContext, CommandDescription, Option } from './interface';
 import { parseArguments, parseFreeFormArguments } from './parser';
@@ -77,10 +71,10 @@ export abstract class SchematicCommand<
   T extends (BaseSchematicSchema & BaseCommandOptions),
 > extends Command<T> {
   readonly allowPrivateSchematics: boolean = false;
+  readonly allowAdditionalArgs: boolean = false;
   private _host = new NodeJsSyncHost();
   private _workspace: experimental.workspace.Workspace;
-  private readonly _engine: Engine<FileSystemCollectionDesc, FileSystemSchematicDesc>;
-  protected _workflow: workflow.BaseWorkflow;
+  protected _workflow: NodeWorkflow;
 
   protected collectionName = '@schematics/angular';
   protected schematicName?: string;
@@ -89,10 +83,8 @@ export abstract class SchematicCommand<
     context: CommandContext,
     description: CommandDescription,
     logger: logging.Logger,
-    private readonly _engineHost: FileSystemEngineHostBase = new NodeModulesEngineHost(),
   ) {
     super(context, description, logger);
-    this._engine = new SchematicEngine(this._engineHost);
   }
 
   public async initialize(options: T & Arguments) {
@@ -109,6 +101,15 @@ export abstract class SchematicCommand<
       );
 
       this.description.options.push(...options.filter(x => !x.hidden));
+
+      // Remove any user analytics from schematics that are NOT part of our safelist.
+      for (const o of this.description.options) {
+        if (o.userAnalytics) {
+          if (!isPackageNameSafeForAnalytics(this.collectionName)) {
+            o.userAnalytics = undefined;
+          }
+        }
+      }
     }
   }
 
@@ -197,12 +198,8 @@ export abstract class SchematicCommand<
     }
   }
 
-  protected getEngineHost() {
-    return this._engineHost;
-  }
-  protected getEngine():
-      Engine<FileSystemCollectionDesc, FileSystemSchematicDesc> {
-    return this._engine;
+  protected getEngine(): FileSystemEngine {
+    return this._workflow.engine;
   }
 
   protected getCollection(collectionName: string): FileSystemCollection {
@@ -259,8 +256,21 @@ export abstract class SchematicCommand<
           root: normalize(this.workspace.root),
         },
     );
+    workflow.engineHost.registerContextTransform(context => {
+      // This is run by ALL schematics, so if someone uses `externalSchematics(...)` which
+      // is safelisted, it would move to the right analytics (even if their own isn't).
+      const collectionName: string = context.schematic.collection.description.name;
+      if (isPackageNameSafeForAnalytics(collectionName)) {
+        return {
+          ...context,
+          analytics: this.analytics,
+        };
+      } else {
+        return context;
+      }
+    });
 
-    this._engineHost.registerOptionsTransform(validateOptionsWithSchema(workflow.registry));
+    workflow.engineHost.registerOptionsTransform(validateOptionsWithSchema(workflow.registry));
 
     if (options.defaults) {
       workflow.registry.addPreTransform(schema.transforms.addUndefinedDefaults);
@@ -290,7 +300,7 @@ export abstract class SchematicCommand<
       return undefined;
     });
 
-    if (options.interactive !== false && process.stdout.isTTY) {
+    if (options.interactive !== false && isTTY()) {
       workflow.registry.usePromptProvider((definitions: Array<schema.PromptDefinition>) => {
         const questions: inquirer.Questions = definitions.map(definition => {
           const question: inquirer.Question = {
@@ -309,7 +319,7 @@ export abstract class SchematicCommand<
               question.type = 'confirm';
               break;
             case 'list':
-              question.type = 'list';
+              question.type = !!definition.multiselect ? 'checkbox' : 'list';
               question.choices = definition.items && definition.items.map(item => {
                 if (typeof item == 'string') {
                   return item;
@@ -437,8 +447,17 @@ export abstract class SchematicCommand<
       args = await this.parseArguments(schematicOptions || [], o);
     }
 
+    // ng-add is special because we don't know all possible options at this point
+    if (args['--'] && !this.allowAdditionalArgs) {
+      args['--'].forEach(additional => {
+        this.logger.fatal(`Unknown option: '${additional.split(/=/)[0]}'`);
+      });
+
+      return 1;
+    }
+
     const pathOptions = o ? this.setPathOptions(o, workingDir) : {};
-    let input = Object.assign(pathOptions, args);
+    let input = { ...pathOptions, ...args };
 
     // Read the default values from the workspace.
     const projectName = input.project !== undefined ? '' + input.project : null;

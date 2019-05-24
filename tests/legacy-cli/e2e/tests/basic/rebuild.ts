@@ -7,7 +7,6 @@ import {
 import {writeFile, writeMultipleFiles} from '../../utils/fs';
 import {wait} from '../../utils/utils';
 import {request} from '../../utils/http';
-import {getGlobalVariable} from '../../utils/env';
 
 const validBundleRegEx = /: Compiled successfully./;
 
@@ -15,12 +14,6 @@ export default function() {
   if (process.platform.startsWith('win')) {
     return Promise.resolve();
   }
-  // Skip this in ejected tests.
-  if (getGlobalVariable('argv').eject) {
-    return Promise.resolve();
-  }
-
-  const lazyChunkRegExp = /lazy-module\.js/g;
 
   return execAndWaitForOutputToMatch('ng', ['serve'], validBundleRegEx)
     // Add a lazy module.
@@ -29,7 +22,7 @@ export default function() {
     // We need to use Promise.all to ensure we are waiting for the rebuild just before we write
     // the file, otherwise rebuilds can be too fast and fail CI.
     .then(() => Promise.all([
-      waitForAnyProcessOutputToMatch(validBundleRegEx, 10000),
+      waitForAnyProcessOutputToMatch(validBundleRegEx, 20000),
       writeFile('src/app/app.module.ts', `
         import { BrowserModule } from '@angular/platform-browser';
         import { NgModule } from '@angular/core';
@@ -60,13 +53,13 @@ export default function() {
     // Count the bundles.
     .then((results) => {
       const stdout = results[0].stdout;
-      if (!lazyChunkRegExp.test(stdout)) {
+      if (!/(lazy-module|0)\.js/g.test(stdout)) {
         throw new Error('Expected webpack to create a new chunk, but did not.');
       }
     })
     // Change multiple files and check that all of them are invalidated and recompiled.
     .then(() => Promise.all([
-      waitForAnyProcessOutputToMatch(validBundleRegEx, 10000),
+      waitForAnyProcessOutputToMatch(validBundleRegEx, 20000),
       writeMultipleFiles({
         'src/app/app.module.ts': `
           import { BrowserModule } from '@angular/platform-browser';

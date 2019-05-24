@@ -10,6 +10,7 @@ import * as glob from 'glob';
 import * as path from 'path';
 import * as webpack from 'webpack';
 import { WebpackConfigOptions, WebpackTestOptions } from '../build-options';
+import { getSourceMapDevTool, isPolyfillsEntry } from './utils';
 
 
 /**
@@ -55,6 +56,17 @@ export function getTestConfig(
     });
   }
 
+  if (wco.buildOptions.sourceMap) {
+    const { styles, scripts } = wco.buildOptions.sourceMap;
+
+    extraPlugins.push(getSourceMapDevTool(
+      scripts || false,
+      styles || false,
+      false,
+      true,
+    ));
+  }
+
   return {
     mode: 'development',
     resolve: {
@@ -63,7 +75,7 @@ export function getTestConfig(
         'browser', 'module', 'main',
       ],
     },
-    devtool: buildOptions.sourceMap ? 'inline-source-map' : 'eval',
+    devtool: buildOptions.sourceMap ? false : 'eval',
     entry: {
       main: path.resolve(root, buildOptions.main),
     },
@@ -73,7 +85,7 @@ export function getTestConfig(
     plugins: extraPlugins,
     optimization: {
       splitChunks: {
-        chunks: ((chunk: { name: string }) => chunk.name !== 'polyfills'),
+        chunks: ((chunk: { name: string }) => !isPolyfillsEntry(chunk.name)),
         cacheGroups: {
           vendors: false,
           vendor: {
@@ -83,7 +95,7 @@ export function getTestConfig(
               const moduleName = module.nameForCondition ? module.nameForCondition() : '';
 
               return /[\\/]node_modules[\\/]/.test(moduleName)
-                && !chunks.some(({ name }) => name === 'polyfills');
+                && !chunks.some(({ name }) => isPolyfillsEntry(name));
             },
           },
         },

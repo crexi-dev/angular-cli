@@ -53,15 +53,20 @@ export default function () {
     .then(() => expectFileToMatch('dist/test-project/renamed-lazy-script.js', 'pre-rename-lazy-script'))
     // index.html lists the right bundles
     .then(() => expectFileToMatch('dist/test-project/index.html', oneLineTrim`
-      <script type="text/javascript" src="runtime.js"></script>
-      <script type="text/javascript" src="polyfills.js"></script>
-      <script type="text/javascript" src="scripts.js"></script>
-      <script type="text/javascript" src="renamed-script.js"></script>
-      <script type="text/javascript" src="vendor.js"></script>
-      <script type="text/javascript" src="main.js"></script>
+      <script src="runtime-es2015.js" type="module"></script>
+      <script src="polyfills-es2015.js" type="module"></script>
+      <script src="runtime-es5.js" nomodule></script>
+      <script src="polyfills-es5.js" nomodule></script>
+      <script src="scripts.js"></script>
+      <script src="renamed-script.js"></script>
+      <script src="vendor-es2015.js" type="module"></script>
+      <script src="main-es2015.js" type="module"></script>
+      <script src="vendor-es5.js" nomodule></script>
+      <script src="main-es5.js" nomodule></script>
     `))
     // Ensure scripts can be separately imported from the app.
-    .then(() => expectFileToMatch('dist/test-project/main.js', 'console.log(\'string-script\');'));
+    .then(() => expectFileToMatch('dist/test-project/main-es5.js', 'console.log(\'string-script\');'))
+    .then(() => expectFileToMatch('dist/test-project/main-es2015.js', 'console.log(\'string-script\');'));
     // TODO(architect): disabled until --prod is added.
     // Verify uglify, sourcemaps and hashes. Lazy scripts should not get hashes.
     // .then(() => ng('build', '--prod', '--source-map'))

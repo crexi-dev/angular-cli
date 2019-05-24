@@ -99,13 +99,13 @@ export interface PromptDefinition {
   id: string;
   type: string;
   message: string;
-  default?: string | number | boolean | null;
-  priority: number;
+  default?: string | string[] | number | boolean | null;
   validator?: (value: string) => boolean | string | Promise<boolean | string>;
 
   items?: Array<string | { value: JsonValue, label: string }>;
 
   raw?: string | JsonObject;
+  multiselect?: boolean;
 }
 
 export type PromptProvider = (definitions: Array<PromptDefinition>)

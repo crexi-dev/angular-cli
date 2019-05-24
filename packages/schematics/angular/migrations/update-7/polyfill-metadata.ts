@@ -7,7 +7,7 @@
  */
 import { JsonObject, JsonParseMode, JsonValue, parseJson } from '@angular-devkit/core';
 import { Rule, Tree, chain, noop } from '@angular-devkit/schematics';
-import * as ts from 'typescript';
+import * as ts from '../../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 
 function isJsonObject(value: JsonValue): value is JsonObject {
   return value != null && typeof value === 'object' && !Array.isArray(value);
@@ -29,18 +29,15 @@ function _removeReflectFromPolyfills(tree: Tree, path: string) {
   const recorder = tree.beginUpdate(path);
 
   const sourceFile = ts.createSourceFile(path, source.toString(), ts.ScriptTarget.Latest);
-  const imports = (
-    sourceFile.statements
-      .filter(s => s.kind === ts.SyntaxKind.ImportDeclaration) as ts.ImportDeclaration[]
-  );
+  const imports = sourceFile.statements
+      .filter(s => s.kind === ts.SyntaxKind.ImportDeclaration) as ts.ImportDeclaration[];
 
   for (const i of imports) {
-    const module = i.moduleSpecifier.kind == ts.SyntaxKind.StringLiteral
-      && (i.moduleSpecifier as ts.StringLiteral).text;
+    const module = ts.isStringLiteral(i.moduleSpecifier) && i.moduleSpecifier.text;
 
     switch (module) {
       case 'core-js/es7/reflect':
-        recorder.remove(i.getStart(sourceFile), i.getWidth(sourceFile));
+        recorder.remove(i.getFullStart(), i.getFullWidth());
         break;
     }
   }

@@ -5,7 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { logging } from '@angular-devkit/core';
+import { analytics, logging } from '@angular-devkit/core';
 import { Observable } from 'rxjs';
 import { Url } from 'url';
 import { FileEntry, MergeStrategy, Tree } from '../tree/interface';
@@ -42,6 +42,7 @@ export interface TaskInfo {
 }
 
 export interface ExecutionOptions {
+  scope: string;
   interactive: boolean;
 }
 
@@ -191,6 +192,9 @@ export interface TypedSchematicContext<CollectionMetadataT extends object,
   readonly strategy: MergeStrategy;
   readonly interactive: boolean;
   addTask<T>(task: TaskConfigurationGenerator<T>, dependencies?: Array<TaskId>): TaskId;
+
+  // This might be undefined if the feature is unsupported.
+  readonly analytics?: analytics.Analytics;
 }
 
 
@@ -226,4 +230,5 @@ export type AsyncFileOperator = (tree: FileEntry) => Observable<FileEntry | null
  * know which types is the schematic or collection metadata, as they are both tooling specific.
  */
 export type Source = (context: SchematicContext) => Tree | Observable<Tree>;
-export type Rule = (tree: Tree, context: SchematicContext) => Tree | Observable<Tree> | Rule | void;
+export type Rule = (tree: Tree, context: SchematicContext) =>
+  Tree | Observable<Tree> | Rule | Promise<void> | Promise<Rule> | void;

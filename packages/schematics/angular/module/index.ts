@@ -11,21 +11,21 @@ import {
   SchematicsException,
   Tree,
   apply,
-  branchAndMerge,
+  applyTemplates,
   chain,
   filter,
   mergeWith,
   move,
   noop,
-  template,
   url,
 } from '@angular-devkit/schematics';
-import * as ts from 'typescript';
+import * as ts from '../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 import { addImportToModule } from '../utility/ast-utils';
 import { InsertChange } from '../utility/change';
 import { buildRelativePath, findModuleFromOptions } from '../utility/find-module';
+import { applyLintFix } from '../utility/lint-fix';
 import { parseName } from '../utility/parse-name';
-import { buildDefaultPath, getProject } from '../utility/project';
+import { createDefaultPath } from '../utility/workspace';
 import { Schema as ModuleOptions } from './schema';
 
 
@@ -69,14 +69,9 @@ function addDeclarationToNgModule(options: ModuleOptions): Rule {
 }
 
 export default function (options: ModuleOptions): Rule {
-  return (host: Tree) => {
-    if (!options.project) {
-      throw new SchematicsException('Option (project) is required.');
-    }
-    const project = getProject(host, options.project);
-
+  return async (host: Tree) => {
     if (options.path === undefined) {
-      options.path = buildDefaultPath(project);
+      options.path = await createDefaultPath(host, options.project as string);
     }
 
     if (options.module) {
@@ -88,8 +83,8 @@ export default function (options: ModuleOptions): Rule {
     options.path = parsedPath.path;
 
     const templateSource = apply(url('./files'), [
-      options.routing ? noop() : filter(path => !path.endsWith('-routing.module.ts')),
-      template({
+      options.routing ? noop() : filter(path => !path.endsWith('-routing.module.ts.template')),
+      applyTemplates({
         ...strings,
         'if-flat': (s: string) => options.flat ? '' : s,
         ...options,
@@ -98,10 +93,9 @@ export default function (options: ModuleOptions): Rule {
     ]);
 
     return chain([
-      branchAndMerge(chain([
-        addDeclarationToNgModule(options),
-        mergeWith(templateSource),
-      ])),
+      addDeclarationToNgModule(options),
+      mergeWith(templateSource),
+      options.lintFix ? applyLintFix(options.path) : noop(),
     ]);
   };
 }

@@ -5,8 +5,8 @@
 
 licenses(["notice"])  # MIT
 
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_library")
-load("@build_bazel_rules_nodejs//:defs.bzl", "jasmine_node_test")
+load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
+load("@npm_bazel_typescript//:defs.bzl", "ts_library")
 load("//tools:ts_json_schema.bzl", "ts_json_schema")
 
 package(default_visibility = ["//visibility:public"])
@@ -27,10 +27,10 @@ ts_library(
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/schematics",
         "//packages/angular_devkit/schematics:tasks",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/node",
         "@npm//@types/semver",
+        "@npm//rxjs",
+        "@npm//semver",
     ],
 )
 
@@ -46,6 +46,7 @@ ts_json_schema(
 
 ts_library(
     name = "update_test_lib",
+    testonly = True,
     srcs = glob(
         include = [
             "**/*_spec.ts",
@@ -55,25 +56,23 @@ ts_library(
     data = glob(
         include = [
             "**/*.json",
-        ]
+        ],
     ),
+    # @external_begin
+    tsconfig = "//:tsconfig-test.json",
     deps = [
         ":update",
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/schematics",
         "//packages/angular_devkit/schematics:testing",
-        "@rxjs",
-        "@rxjs//operators",
         "@npm//@types/jasmine",
         "@npm//@types/node",
         "@npm//@types/semver",
         "@npm//@yarnpkg/lockfile",
         "@npm//ini",
         "@npm//pacote",
+        "@npm//rxjs",
     ],
-    testonly = True,
-    # @external_begin
-    tsconfig = "//:tsconfig-test.json",
     # @external_end
 )
 
@@ -82,8 +81,7 @@ jasmine_node_test(
     srcs = [":update_test_lib"],
     deps = [
         "@npm//jasmine",
-        "@npm//source-map",
-        "@npm//chokidar",
         "@npm//npm-registry-client",
+        "@npm//source-map",
     ],
 )
