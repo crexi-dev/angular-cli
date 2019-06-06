@@ -57,7 +57,8 @@
       "packages/angular/*",
       "packages/angular_devkit/*",
       "packages/ngtools/*",
-      "packages/schematics/*"
+      "packages/schematics/*",
+      "packages/crexi-dev/*"
     ],
     "nohoist": [
       "@angular/compiler-cli"

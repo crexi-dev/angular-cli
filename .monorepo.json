@@ -166,11 +166,20 @@
       "section": "Schematics",
       "snapshotRepo": "angular/schematics-update-builds"
     },
-    "@crexi-dev/schematics": {
-        "name": "CREXi Schematics",
-        "section": "crexi-dev",
-        "version": "7.1.0",
-        "hash": "415e700a4b37e4c7bbc39215ccada542"
-    }
+    "@crexi-dev/build-ng-packagr": {
+        "name": "Build NgPackagr",
+        "links": [
+          {
+            "label": "README",
+            "url": "/packages/crexi_dev/build_ng_packagr/README.md"
+          }
+        ]
+      },
+      "@crexi-dev/schematics": {
+          "name": "CREXi Schematics",
+          "section": "crexi-dev",
+          "version": "7.1.0",
+          "hash": "415e700a4b37e4c7bbc39215ccada542"
+      }
   }
 }
