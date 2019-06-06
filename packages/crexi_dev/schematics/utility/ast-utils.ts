@@ -5,7 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import * as ts from 'typescript';
+import * as ts from '../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 import { Change, InsertChange, NoopChange } from './change';
 
 
@@ -189,12 +189,13 @@ export function insertAfterLastOccurrence(nodes: ts.Node[],
                                           file: string,
                                           fallbackPos: number,
                                           syntaxKind?: ts.SyntaxKind): Change {
-  // sort() has a side effect, so make a copy so that we won't overwrite the parent's object.
-  let lastItem = [...nodes].sort(nodesByPosition).pop();
-  if (!lastItem) {
-    throw new Error();
+  let lastItem: ts.Node | undefined;
+  for (const node of nodes) {
+    if (!lastItem || lastItem.getStart() < node.getStart()) {
+      lastItem = node;
+    }
   }
-  if (syntaxKind) {
+  if (syntaxKind && lastItem) {
     lastItem = findNodes(lastItem, syntaxKind).sort(nodesByPosition).pop();
   }
   if (!lastItem && fallbackPos == undefined) {
@@ -289,8 +290,7 @@ export function getDecoratorMetadata(source: ts.SourceFile, identifier: string,
       if (expr.expression.kind == ts.SyntaxKind.Identifier) {
         const id = expr.expression as ts.Identifier;
 
-        return id.getFullText(source) == identifier
-          && angularImports[id.getFullText(source)] === module;
+        return id.text == identifier && angularImports[id.text] === module;
       } else if (expr.expression.kind == ts.SyntaxKind.PropertyAccessExpression) {
         // This covers foo.NgModule when importing * as foo.
         const paExpr = expr.expression as ts.PropertyAccessExpression;
@@ -300,7 +300,7 @@ export function getDecoratorMetadata(source: ts.SourceFile, identifier: string,
         }
 
         const id = paExpr.name.text;
-        const moduleId = (paExpr.expression as ts.Identifier).getText(source);
+        const moduleId = (paExpr.expression as ts.Identifier).text;
 
         return id === identifier && (angularImports[moduleId + '.'] === module);
       }
@@ -449,16 +449,14 @@ export function addSymbolToNgModuleMetadata(
     const expr = node as ts.ObjectLiteralExpression;
     if (expr.properties.length == 0) {
       position = expr.getEnd() - 1;
-      toInsert = `  ${metadataField}: [${symbolName}]\n`;
+      toInsert = `  ${symbolName}\n`;
     } else {
-      node = expr.properties[expr.properties.length - 1];
-      position = node.getEnd();
       // Get the indentation of the last element, if any.
       const text = node.getFullText(source);
       if (text.match(/^\r?\r?\n/)) {
-        toInsert = `,${text.match(/^\r?\n\s*/)[0]}${metadataField}: [${symbolName}]`;
+        toInsert = `,${text.match(/^\r?\n\s*/)[0]}${symbolName}`;
       } else {
-        toInsert = `, ${metadataField}: [${symbolName}]`;
+        toInsert = `, ${symbolName}`;
       }
     }
   } else if (node.kind == ts.SyntaxKind.ArrayLiteralExpression) {

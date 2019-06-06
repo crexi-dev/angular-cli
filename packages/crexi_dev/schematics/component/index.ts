@@ -148,7 +148,6 @@ export default function(options: ComponentOptions): Rule {
 
     const templateSource = apply(url('./files'), [
       options.spec ? noop() : filter(path => !path.endsWith('.spec.ts')),
-      options.spec ? noop() : filter(path => !path.endsWith('.stub.ts')),
       options.inlineStyle ? filter(path => !path.endsWith('.__styleext__')) : noop(),
       options.inlineTemplate ? filter(path => !path.endsWith('.html')) : noop(),
       template({

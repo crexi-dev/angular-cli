@@ -178,7 +178,7 @@
       "@crexi-dev/schematics": {
           "name": "CREXi Schematics",
           "section": "crexi-dev",
-          "version": "7.1.0",
+          "version": "7.1.1",
           "hash": "415e700a4b37e4c7bbc39215ccada542"
       }
   }
