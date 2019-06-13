@@ -6,6 +6,7 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import { execSync } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as semver from 'semver';
 import { Arguments, Option } from '../models/interface';
@@ -17,15 +18,16 @@ import {
   PackageManifest,
   fetchPackageMetadata,
 } from '../utilities/package-metadata';
-import { findNodeDependencies, readPackageTree } from '../utilities/package-tree';
+import {
+  PackageTreeActual,
+  findNodeDependencies,
+  readPackageTree,
+} from '../utilities/package-tree';
 import { Schema as UpdateCommandSchema } from './update';
 
 const npa = require('npm-package-arg');
 
-const oldConfigFileNames = [
-  '.angular-cli.json',
-  'angular-cli.json',
-];
+const oldConfigFileNames = ['.angular-cli.json', 'angular-cli.json'];
 
 export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
   public readonly allowMissingWorkspace = true;
@@ -102,15 +104,18 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
     this.logger.info(`Using package manager: '${packageManager}'`);
 
     // Special handling for Angular CLI 1.x migrations
-    if (options.migrateOnly === undefined && options.from === undefined) {
-      if (!options.all && packages.length === 1 && packages[0].name === '@angular/cli') {
-        const oldConfigFilePath = findUp(oldConfigFileNames, process.cwd());
-        if (oldConfigFilePath) {
+    if (
+      options.migrateOnly === undefined &&
+      options.from === undefined &&
+      !options.all &&
+      packages.length === 1 &&
+      packages[0].name === '@angular/cli' &&
+      this.workspace.configFile &&
+      oldConfigFileNames.includes(this.workspace.configFile)
+    ) {
           options.migrateOnly = true;
           options.from = '1.0.0';
         }
-      }
-    }
 
     this.logger.info('Collecting installed dependencies...');
 
@@ -185,11 +190,44 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
         this.logger.error('Package contains a malformed migrations field.');
 
         return 1;
+      } else if (path.posix.isAbsolute(migrations) || path.win32.isAbsolute(migrations)) {
+        this.logger.error(
+          'Package contains an invalid migrations field. Absolute paths are not permitted.',
+        );
+
+        return 1;
       }
 
-      // if not non-relative, add package name
-      if (migrations.startsWith('.') || migrations.startsWith('/')) {
-        migrations = path.join(packageName, migrations);
+      // Normalize slashes
+      migrations = migrations.replace(/\\/g, '/');
+
+      if (migrations.startsWith('../')) {
+        this.logger.error(
+          'Package contains an invalid migrations field. ' +
+            'Paths outside the package root are not permitted.',
+        );
+
+        return 1;
+      }
+
+      // Check if it is a package-local location
+      const localMigrations = path.join(packageNode.path, migrations);
+      if (fs.existsSync(localMigrations)) {
+        migrations = localMigrations;
+      } else {
+        // Try to resolve from package location.
+        // This avoids issues with package hoisting.
+        try {
+          migrations = require.resolve(migrations, { paths: [packageNode.path] });
+        } catch (e) {
+          if (e.code === 'MODULE_NOT_FOUND') {
+            this.logger.error('Migrations for package were not found.');
+          } else {
+            this.logger.error(`Unable to resolve migrations for package.  [${e.message}]`);
+          }
+
+          return 1;
+        }
       }
 
       return this.runSchematic({
@@ -207,7 +245,10 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       });
     }
 
-    const requests: PackageIdentifier[] = [];
+    const requests: {
+      identifier: PackageIdentifier;
+      node: PackageTreeActual | string;
+    }[] = [];
 
     // Validate packages actually are part of the workspace
     for (const pkg of packages) {
@@ -219,29 +260,35 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       }
 
       // If a specific version is requested and matches the installed version, skip.
-      if (pkg.type === 'version' &&
-         typeof node === 'object' &&
-         node.package.version === pkg.fetchSpec) {
+      if (
+        pkg.type === 'version' &&
+        typeof node === 'object' &&
+        node.package.version === pkg.fetchSpec
+      ) {
         this.logger.info(`Package '${pkg.name}' is already at '${pkg.fetchSpec}'.`);
         continue;
       }
 
-      requests.push(pkg);
+      requests.push({ identifier: pkg, node });
     }
 
     if (requests.length === 0) {
       return 0;
     }
 
+    const packagesToUpdate: string[] = [];
+
     this.logger.info('Fetching dependency metadata from registry...');
-    for (const requestIdentifier of requests) {
+    for (const { identifier: requestIdentifier, node } of requests) {
+      const packageName = requestIdentifier.name;
+
       let metadata;
       try {
         // Metadata requests are internally cached; multiple requests for same name
         // does not result in additional network traffic
-        metadata = await fetchPackageMetadata(requestIdentifier.name, this.logger);
+        metadata = await fetchPackageMetadata(packageName, this.logger);
       } catch (e) {
-        this.logger.error(`Error fetching metadata for '${requestIdentifier.name}': ` + e.message);
+        this.logger.error(`Error fetching metadata for '${packageName}': ` + e.message);
 
         return 1;
       }
@@ -270,6 +317,20 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
 
         return 1;
       }
+
+      if (
+        (typeof node === 'string' && manifest.version === node) ||
+        (typeof node === 'object' && manifest.version === node.package.version)
+      ) {
+        this.logger.info(`Package '${packageName}' is already up to date.`);
+        continue;
+      }
+
+      packagesToUpdate.push(requestIdentifier.toString());
+    }
+
+    if (packagesToUpdate.length === 0) {
+      return 0;
     }
 
     return this.runSchematic({
@@ -280,7 +341,7 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       additionalOptions: {
         force: options.force || false,
         packageManager,
-        packages: requests.map(p => p.toString()),
+        packages: packagesToUpdate,
       },
     });
   }
@@ -288,10 +349,24 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
   checkCleanGit() {
     try {
       const result = execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' });
+      if (result.trim().length === 0) {
+        return true;
+      }
 
-      return result.trim().length === 0;
-    } catch {
-      return true;
-    }
+      // Only files inside the workspace root are relevant
+      for (const entry of result.split('\n')) {
+        const relativeEntry = path.relative(
+          path.resolve(this.workspace.root),
+          path.resolve(entry.slice(3).trim()),
+        );
+
+        if (!relativeEntry.startsWith('..') && !path.isAbsolute(relativeEntry)) {
+          return false;
+        }
+      }
+
+    } catch { }
+
+    return true;
   }
 }

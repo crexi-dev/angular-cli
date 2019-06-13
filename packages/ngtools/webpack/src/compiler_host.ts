@@ -32,6 +32,7 @@ export class WebpackCompilerHost implements ts.CompilerHost {
   private _syncHost: virtualFs.SyncDelegateHost;
   private _memoryHost: virtualFs.SyncDelegateHost;
   private _changedFiles = new Set<string>();
+  private _readResourceFiles = new Set<string>();
   private _basePath: Path;
   private _resourceLoader?: WebpackResourceLoader;
   private _sourceFileCache = new Map<string, ts.SourceFile>();
@@ -147,13 +148,15 @@ export class WebpackCompilerHost implements ts.CompilerHost {
     const filePath = this.resolve(fileName);
 
     try {
+      let content: ArrayBuffer;
       if (this._memoryHost.isFile(filePath)) {
-        return virtualFs.fileBufferToString(this._memoryHost.read(filePath));
+        content = this._memoryHost.read(filePath);
       } else {
-        const content = this._syncHost.read(filePath);
-
-        return virtualFs.fileBufferToString(content);
+        content = this._syncHost.read(filePath);
       }
+
+      // strip BOM
+      return virtualFs.fileBufferToString(content).replace(/^\uFEFF/, '');
     } catch {
       return undefined;
     }
@@ -339,6 +342,8 @@ export class WebpackCompilerHost implements ts.CompilerHost {
   }
 
   readResource(fileName: string) {
+    this._readResourceFiles.add(fileName);
+
     if (this.directTemplateLoading &&
         (fileName.endsWith('.html') || fileName.endsWith('.svg'))) {
       return this.readFile(fileName);
@@ -352,6 +357,25 @@ export class WebpackCompilerHost implements ts.CompilerHost {
     } else {
       return this.readFile(fileName);
     }
+  }
+
+  getModifiedResourceFiles(): Set<string> {
+    const modifiedFiles = new Set<string>();
+
+    for (const changedFile of this._changedFiles) {
+      if (this._readResourceFiles.has(changedFile)) {
+        modifiedFiles.add(changedFile);
+      }
+
+      if (!this._resourceLoader) {
+        continue;
+      }
+      for (const resourcePath of this._resourceLoader.getAffectedResources(changedFile)) {
+          modifiedFiles.add(resourcePath);
+      }
+    }
+
+    return modifiedFiles;
   }
 
   trace(message: string) {

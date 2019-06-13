@@ -151,6 +151,7 @@ export class AngularCompilerPlugin {
     return tsProgram ? tsProgram.getTypeChecker() : null;
   }
 
+  /** @deprecated  From 8.0.2 */
   static isSupported() {
     return VERSION && parseInt(VERSION.major) >= 8;
   }
@@ -666,6 +667,7 @@ export class AngularCompilerPlugin {
           this._warnings,
           this._errors,
           this._basePath,
+          this._compilerOptions,
         );
       }
 
@@ -845,7 +847,6 @@ export class AngularCompilerPlugin {
 
   private async _make(compilation: compilation.Compilation) {
     time('AngularCompilerPlugin._make');
-    this._emitSkipped = true;
     // tslint:disable-next-line:no-any
     if ((compilation as any)._ngToolsWebpackPluginInstance) {
       throw new Error('An @ngtools/webpack plugin already exist for this compilation.');
@@ -1195,7 +1196,7 @@ export class AngularCompilerPlugin {
           'AngularCompilerPlugin._emit.ts', diagMode));
 
         if (!hasErrors(allDiagnostics)) {
-          if (this._firstRun || changedTsFiles.size > 20) {
+          if (this._firstRun || changedTsFiles.size > 20 || this._emitSkipped) {
             emitResult = tsProgram.emit(
               undefined,
               undefined,

@@ -174,13 +174,14 @@ describe('Application Schematic', () => {
     expect(karmaConf).toContain(`dir: require('path').join(__dirname, '../../coverage/foo')`);
   });
 
-  it('minimal=true should not create e2e and test targets', async () => {
+  it('minimal=true should not create e2e, lint and test targets', async () => {
     const options = { ...defaultOptions, minimal: true };
     const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
       .toPromise();
     const config = JSON.parse(tree.readContent('/angular.json'));
     const architect = config.projects.foo.architect;
     expect(architect.test).not.toBeDefined();
+    expect(architect.e2e).not.toBeDefined();
     expect(architect.e2e).not.toBeDefined();
   });
 
@@ -211,6 +212,24 @@ describe('Application Schematic', () => {
       '/projects/foo/src/app/app.module.ts',
       '/projects/foo/src/app/app.component.ts',
     ]));
+  });
+
+  it('should set AOT option to false for VE projects', async () => {
+    const options = { ...defaultOptions };
+
+    const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
+      .toPromise();
+    const workspace = JSON.parse(tree.readContent('/angular.json'));
+    expect(workspace.projects.foo.architect.build.options.aot).toEqual(false);
+  });
+
+  it('should set AOT option to true for Ivy projects', async () => {
+    const options = { ...defaultOptions, enableIvy: true };
+
+    const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
+      .toPromise();
+    const workspace = JSON.parse(tree.readContent('/angular.json'));
+    expect(workspace.projects.foo.architect.build.options.aot).toEqual(true);
   });
 
   describe(`update package.json`, () => {
@@ -252,6 +271,18 @@ describe('Application Schematic', () => {
 
       const packageJson = JSON.parse(tree.readContent('package.json'));
       expect(packageJson.devDependencies['@angular-devkit/build-angular']).toBeUndefined();
+    });
+
+    it('should set the lint tsConfig option', async () => {
+      const tree = await schematicRunner.runSchematicAsync('application', defaultOptions, workspaceTree)
+        .toPromise();
+      const workspace = JSON.parse(tree.readContent('/angular.json'));
+      const lintOptions = workspace.projects.foo.architect.lint.options;
+      expect(lintOptions.tsConfig).toEqual([
+        'projects/foo/tsconfig.app.json',
+        'projects/foo/tsconfig.spec.json',
+        'projects/foo/e2e/tsconfig.json',
+      ]);
     });
   });
 

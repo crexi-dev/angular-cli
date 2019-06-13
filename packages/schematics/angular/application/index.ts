@@ -194,6 +194,7 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
           main: `${sourceRoot}/main.ts`,
           polyfills: `${sourceRoot}/polyfills.ts`,
           tsConfig: `${projectRoot}tsconfig.app.json`,
+          aot: !!options.enableIvy,
           assets: [
             `${sourceRoot}/favicon.ico`,
             `${sourceRoot}/assets`,
@@ -260,7 +261,7 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
           scripts: [],
         },
       },
-      lint: {
+      lint: options.minimal ? undefined : {
         builder: Builders.TsLint,
         options: {
           tsConfig: [
