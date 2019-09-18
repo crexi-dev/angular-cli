@@ -23,7 +23,12 @@ import { WebpackConfigOptions } from '../angular-cli-files/models/build-options'
 import { getEsVersionForFileName } from '../angular-cli-files/models/webpack-configs';
 import { readTsconfig } from '../angular-cli-files/utilities/read-tsconfig';
 import { Schema as BrowserBuilderSchema } from '../browser/schema';
-import { NormalizedBrowserBuilderSchema, defaultProgress, normalizeBrowserSchema } from '../utils';
+import {
+  NormalizedBrowserBuilderSchema,
+  defaultProgress,
+  fullDifferential,
+  normalizeBrowserSchema,
+} from '../utils';
 import { BuildBrowserFeatures } from './build-browser-features';
 
 const SpeedMeasurePlugin = require('speed-measure-webpack-plugin');
@@ -61,26 +66,37 @@ export async function generateWebpackConfig(
 
   const scriptTargets = [scriptTarget];
 
-  if (differentialLoading) {
-    scriptTargets.unshift(ts.ScriptTarget.ES5);
+  if (differentialLoading && fullDifferential) {
+    scriptTargets.push(ts.ScriptTarget.ES5);
   }
 
   // For differential loading, we can have several targets
   return scriptTargets.map(scriptTarget => {
     let buildOptions: NormalizedBrowserBuilderSchema = { ...options };
-    if (differentialLoading) {
-      // For differential loading, the builder needs to created the index.html by itself
-      // without using a webpack plugin.
+    const supportES2015
+      = scriptTarget !== ts.ScriptTarget.ES3 && scriptTarget !== ts.ScriptTarget.ES5;
+
+    if (differentialLoading && fullDifferential) {
       buildOptions = {
         ...options,
+        ...(
+          // FIXME: we do create better webpack config composition to achieve the below
+          // When DL is enabled and supportES2015 is true it means that we are on the second build
+          // This also means that we don't need to include styles and assets multiple times
+          supportES2015
+            ? {}
+            : {
+              styles: options.extractCss ? [] : options.styles,
+              assets: [],
+            }
+        ),
         es5BrowserSupport: undefined,
         esVersionInFileName: true,
         scriptTargetOverride: scriptTarget,
       };
+    } else if (differentialLoading && !fullDifferential) {
+      buildOptions = { ...options, esVersionInFileName: true, scriptTargetOverride: ts.ScriptTarget.ES5, es5BrowserSupport: undefined };
     }
-
-    const supportES2015
-      = scriptTarget !== ts.ScriptTarget.ES3 && scriptTarget !== ts.ScriptTarget.ES5;
 
     const wco: BrowserWebpackConfigOptions = {
       root: workspaceRoot,
@@ -110,7 +126,7 @@ export async function generateWebpackConfig(
 
     if (options.profile || process.env['NG_BUILD_PROFILING']) {
       const esVersionInFileName = getEsVersionForFileName(
-        wco.buildOptions.scriptTargetOverride,
+        fullDifferential ? buildOptions.scriptTargetOverride : tsConfig.options.target,
         wco.buildOptions.esVersionInFileName,
       );
 
@@ -198,4 +214,20 @@ export async function generateBrowserWebpackConfigFromContext(
   );
 
   return { workspace, config };
+}
+
+export function getIndexOutputFile(options: BrowserBuilderSchema): string {
+  if (typeof options.index === 'string') {
+    return path.basename(options.index);
+  } else {
+    return options.index.output || 'index.html';
+  }
+}
+
+export function getIndexInputFile(options: BrowserBuilderSchema): string {
+  if (typeof options.index === 'string') {
+    return options.index;
+  } else {
+    return options.index.input;
+  }
 }

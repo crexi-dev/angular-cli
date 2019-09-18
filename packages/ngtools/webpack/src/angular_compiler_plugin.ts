@@ -28,6 +28,7 @@ import {
   createCompilerHost,
   createProgram,
   formatDiagnostics,
+  isNgDiagnostic,
   readConfiguration,
 } from '@angular/compiler-cli';
 import { ChildProcess, ForkOptions, fork } from 'child_process';
@@ -107,6 +108,10 @@ export class AngularCompilerPlugin {
   private _platform: PLATFORM;
   private _JitMode = false;
   private _emitSkipped = true;
+  // This is needed because if the first build fails we need to do a full emit
+  // even whe only a single file gets updated.
+  private _hadFullJitEmit: boolean | undefined;
+  private _unusedFiles = new Set<string>();
   private _changedFileExtensions = new Set(['ts', 'tsx', 'html', 'css', 'js', 'json']);
 
   // Webpack plugin.
@@ -351,8 +356,6 @@ export class AngularCompilerPlugin {
       this._updateForkedTypeChecker(this._rootNames, this._getChangedCompilationFiles());
     }
 
-    // Use an identity function as all our paths are absolute already.
-    this._moduleResolutionCache = ts.createModuleResolutionCache(this._basePath, x => x);
     const oldTsProgram = this._getTsProgram();
 
     if (this._JitMode) {
@@ -589,6 +592,60 @@ export class AngularCompilerPlugin {
     }
   }
 
+  private _warnOnUnusedFiles(compilation: compilation.Compilation) {
+    // Only do the unused TS files checks when under Ivy
+    // since previously we did include unused files in the compilation
+    // See: https://github.com/angular/angular-cli/pull/15030
+    // Don't do checks for compilations with errors, since that can result in a partial compilation.
+    if (!this._compilerOptions.enableIvy || compilation.errors.length > 0) {
+      return;
+    }
+
+    const program = this._getTsProgram();
+    if (!program) {
+      return;
+    }
+
+    // Exclude the following files from unused checks
+    // - ngfactories & ngstyle might not have a correspondent
+    //   JS file example `@angular/core/core.ngfactory.ts`.
+    // - .d.ts files might not have a correspondent JS file due to bundling.
+    // - __ng_typecheck__.ts will never be requested.
+    const fileExcludeRegExp = /(\.(d|ngfactory|ngstyle)\.ts|ng_typecheck__\.ts)$/;
+
+    const usedFiles = new Set<string>();
+    for (const compilationModule of compilation.modules) {
+      if (!compilationModule.resource) {
+        continue;
+      }
+
+      usedFiles.add(forwardSlashPath(compilationModule.resource));
+
+      // We need the below for dependencies which
+      // are not emitted such as type only TS files
+      for (const dependency of compilationModule.buildInfo.fileDependencies) {
+        usedFiles.add(forwardSlashPath(dependency));
+      }
+    }
+
+    const sourceFiles = program.getSourceFiles();
+    for (const { fileName } of sourceFiles) {
+      if (
+        fileExcludeRegExp.test(fileName)
+        || usedFiles.has(fileName)
+        || this._unusedFiles.has(fileName)
+      ) {
+        continue;
+      }
+
+      compilation.warnings.push(
+        `${fileName} is part of the TypeScript compilation but it's unused.\n` +
+        `Add only entry points to the 'files' or 'include' properties in your tsconfig.`,
+        );
+      this._unusedFiles.add(fileName);
+    }
+  }
+
   // Registration hook for webpack plugin.
   // tslint:disable-next-line:no-big-function
   apply(compiler: Compiler & { watchMode?: boolean, parentCompilation?: compilation.Compilation }) {
@@ -605,6 +662,8 @@ export class AngularCompilerPlugin {
     // cleanup if not watching
     compiler.hooks.thisCompilation.tap('angular-compiler', compilation => {
       compilation.hooks.finishModules.tap('angular-compiler', () => {
+        this._warnOnUnusedFiles(compilation);
+
         let rootCompiler = compiler;
         while (rootCompiler.parentCompilation) {
           // tslint:disable-next-line:no-any
@@ -617,6 +676,7 @@ export class AngularCompilerPlugin {
           this._program = null;
           this._transformers = [];
           this._resourceLoader = undefined;
+          this._compilerHost.reset();
         }
       });
     });
@@ -671,6 +731,9 @@ export class AngularCompilerPlugin {
         );
       }
 
+      // Use an identity function as all our paths are absolute already.
+      this._moduleResolutionCache = ts.createModuleResolutionCache(this._basePath, x => x);
+
       // Create the webpack compiler host.
       const webpackCompilerHost = new WebpackCompilerHost(
         this._compilerOptions,
@@ -679,6 +742,7 @@ export class AngularCompilerPlugin {
         true,
         this._options.directTemplateLoading,
         ngccProcessor,
+        this._moduleResolutionCache,
       );
 
       // Create and set a new WebpackResourceLoader in AOT
@@ -1007,19 +1071,57 @@ export class AngularCompilerPlugin {
     const { emitResult, diagnostics } = this._emit();
     timeEnd('AngularCompilerPlugin._update._emit');
 
-    // Report diagnostics.
-    const errors = diagnostics
-      .filter((diag) => diag.category === ts.DiagnosticCategory.Error);
-    const warnings = diagnostics
-      .filter((diag) => diag.category === ts.DiagnosticCategory.Warning);
+    // Report Diagnostics
+    const tsErrors = [];
+    const tsWarnings = [];
+    const ngErrors = [];
+    const ngWarnings = [];
 
-    if (errors.length > 0) {
-      const message = formatDiagnostics(errors);
+    for (const diagnostic of diagnostics) {
+      switch (diagnostic.category) {
+        case ts.DiagnosticCategory.Error:
+          if (isNgDiagnostic(diagnostic)) {
+            ngErrors.push(diagnostic);
+          } else {
+            tsErrors.push(diagnostic);
+          }
+          break;
+        case ts.DiagnosticCategory.Message:
+        case ts.DiagnosticCategory.Suggestion:
+          // Warnings?
+        case ts.DiagnosticCategory.Warning:
+          if (isNgDiagnostic(diagnostic)) {
+            ngWarnings.push(diagnostic);
+          } else {
+            tsWarnings.push(diagnostic);
+          }
+          break;
+      }
+    }
+
+    if (tsErrors.length > 0) {
+      const message = ts.formatDiagnosticsWithColorAndContext(
+        tsErrors,
+        this._compilerHost,
+      );
       this._errors.push(new Error(message));
     }
 
-    if (warnings.length > 0) {
-      const message = formatDiagnostics(warnings);
+    if (tsWarnings.length > 0) {
+      const message = ts.formatDiagnosticsWithColorAndContext(
+        tsWarnings,
+        this._compilerHost,
+      );
+      this._warnings.push(message);
+    }
+
+    if (ngErrors.length > 0) {
+      const message = formatDiagnostics(ngErrors);
+      this._errors.push(new Error(message));
+    }
+
+    if (ngWarnings.length > 0) {
+      const message = formatDiagnostics(ngWarnings);
       this._warnings.push(message);
     }
 
@@ -1132,7 +1234,7 @@ export class AngularCompilerPlugin {
           return null;
         }
       })
-      .filter(x => x);
+      .filter(x => x) as string[];
 
     const resourceImports = findResources(sourceFile)
       .map(resourcePath => resolve(dirname(resolvedFileName), normalize(resourcePath)));
@@ -1144,8 +1246,7 @@ export class AngularCompilerPlugin {
       ...this.getResourceDependencies(this._compilerHost.denormalizePath(resolvedFileName)),
     ].map((p) => p && this._compilerHost.denormalizePath(p)));
 
-    return [...uniqueDependencies]
-      .filter(x => !!x) as string[];
+    return [...uniqueDependencies];
   }
 
   getResourceDependencies(fileName: string): string[] {
@@ -1196,7 +1297,7 @@ export class AngularCompilerPlugin {
           'AngularCompilerPlugin._emit.ts', diagMode));
 
         if (!hasErrors(allDiagnostics)) {
-          if (this._firstRun || changedTsFiles.size > 20 || this._emitSkipped) {
+          if (this._firstRun || changedTsFiles.size > 20 || !this._hadFullJitEmit) {
             emitResult = tsProgram.emit(
               undefined,
               undefined,
@@ -1204,6 +1305,7 @@ export class AngularCompilerPlugin {
               undefined,
               { before: this._transformers },
             );
+            this._hadFullJitEmit = !emitResult.emitSkipped;
             allDiagnostics.push(...emitResult.diagnostics);
           } else {
             for (const changedFile of changedTsFiles) {

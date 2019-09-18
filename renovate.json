@@ -9,6 +9,9 @@
     "PR target: master-only"
   ],
   "timezone": "America/Tijuana",
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "schedule": [
     "after 10pm every weekday",
     "before 4am every weekday",
@@ -18,9 +21,7 @@
     "master"
   ],
   "ignoreDeps": [
-    "source-map",
-    "@types/node",
-    "webpack-subresource-integrity"
+    "@types/node"
   ],
   "packageFiles": [
     "WORKSPACE",
@@ -41,10 +42,18 @@
       "groupName": "angular",
       "pinVersions": false
     },
+   {
+      "packagePatterns": [
+        "^@babel\/.*"
+      ],
+      "groupName": "Babel",
+      "pinVersions": false
+    },
     {
       "packagePatterns": [
         "^@bazel\/.*",
-        "^build_bazel.*"
+        "^build_bazel.*",
+        "^bazel_toolchains$"
       ],
       "groupName": "bazel",
       "pinVersions": false

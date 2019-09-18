@@ -19,7 +19,6 @@ describe('App Shell Schematic', () => {
   const defaultOptions: AppShellOptions = {
     name: 'foo',
     clientProject: 'bar',
-    universalProject: 'universal',
   };
 
   const workspaceOptions: WorkspaceOptions = {
@@ -39,13 +38,13 @@ describe('App Shell Schematic', () => {
   let appTree: UnitTestTree;
 
   beforeEach(async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync('application', appOptions, appTree)
       .toPromise();
   });
 
   it('should ensure the client app has a router-outlet', async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync(
       'application',
       {...appOptions, routing: false},
@@ -152,6 +151,22 @@ describe('App Shell Schematic', () => {
 
   it('should add router imports to server module', async () => {
     const tree = await schematicRunner.runSchematicAsync('appShell', defaultOptions, appTree)
+      .toPromise();
+    const filePath = '/projects/bar/src/app/app.server.module.ts';
+    const content = tree.readContent(filePath);
+    expect(content).toMatch(/import { Routes, RouterModule } from \'@angular\/router\';/);
+  });
+
+  it('should work after adding nguniversal', async () => {
+    let tree = await schematicRunner.runSchematicAsync('universal', defaultOptions, appTree)
+      .toPromise();
+
+    // change main tsconfig to mimic ng add for nguniveral
+    const workspace = JSON.parse(appTree.readContent('/angular.json'));
+    workspace.projects.bar.architect.server.options.main = 'server.ts';
+    appTree.overwrite('angular.json', JSON.stringify(workspace, undefined, 2));
+
+    tree = await schematicRunner.runSchematicAsync('appShell', defaultOptions, tree)
       .toPromise();
     const filePath = '/projects/bar/src/app/app.server.module.ts';
     const content = tree.readContent(filePath);

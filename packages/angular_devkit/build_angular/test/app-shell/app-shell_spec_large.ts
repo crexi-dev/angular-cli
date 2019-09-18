@@ -11,7 +11,6 @@ import { getSystemPath, join, normalize, virtualFs } from '@angular-devkit/core'
 import * as express from 'express'; // tslint:disable-line:no-implicit-dependencies
 import { createArchitect, host } from '../utils';
 
-
 describe('AppShell Builder', () => {
   const target = { project: 'app', target: 'app-shell' };
   let architect: Architect;

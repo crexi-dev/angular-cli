@@ -9,8 +9,6 @@ import { SchematicTestRunner, UnitTestTree } from '@angular-devkit/schematics/te
 import * as path from 'path';
 import { Schema as PwaOptions } from './schema';
 
-
-// tslint:disable:max-line-length
 describe('PWA Schematic', () => {
   const schematicRunner = new SchematicTestRunner(
     '@angular/pwa',
@@ -43,7 +41,7 @@ describe('PWA Schematic', () => {
   };
 
   beforeEach(async () => {
-    appTree = schematicRunner.runExternalSchematic('@schematics/angular', 'workspace', workspaceOptions);
+    appTree = await schematicRunner.runExternalSchematicAsync('@schematics/angular', 'workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runExternalSchematicAsync(
       '@schematics/angular',
       'application',

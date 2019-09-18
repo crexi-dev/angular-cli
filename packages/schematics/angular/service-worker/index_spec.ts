@@ -40,7 +40,7 @@ describe('Service Worker Schematic', () => {
   };
 
   beforeEach(async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync('application', appOptions, appTree)
       .toPromise();
   });
@@ -93,7 +93,6 @@ describe('Service Worker Schematic', () => {
     const tree = await schematicRunner.runSchematicAsync('service-worker', defaultOptions, appTree)
       .toPromise();
     const pkgText = tree.readContent('/projects/bar/src/app/app.module.ts');
-    // tslint:disable-next-line:max-line-length
     const expectedText = 'ServiceWorkerModule.register(\'ngsw-worker.js\', { enabled: environment.production })';
     expect(pkgText).toContain(expectedText);
   });

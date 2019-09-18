@@ -12,7 +12,6 @@ import { getFileContent } from '../utility/test';
 import { Schema as WorkspaceOptions } from '../workspace/schema';
 import { Schema as ApplicationOptions, Style, ViewEncapsulation } from './schema';
 
-// tslint:disable:max-line-length
 describe('Application Schematic', () => {
   const schematicRunner = new SchematicTestRunner(
     '@schematics/angular',
@@ -34,8 +33,8 @@ describe('Application Schematic', () => {
   };
 
   let workspaceTree: UnitTestTree;
-  beforeEach(() => {
-    workspaceTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+  beforeEach(async () => {
+    workspaceTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
   });
 
   it('should create all files of an application', async () => {
@@ -214,24 +213,6 @@ describe('Application Schematic', () => {
     ]));
   });
 
-  it('should set AOT option to false for VE projects', async () => {
-    const options = { ...defaultOptions };
-
-    const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
-      .toPromise();
-    const workspace = JSON.parse(tree.readContent('/angular.json'));
-    expect(workspace.projects.foo.architect.build.options.aot).toEqual(false);
-  });
-
-  it('should set AOT option to true for Ivy projects', async () => {
-    const options = { ...defaultOptions, enableIvy: true };
-
-    const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
-      .toPromise();
-    const workspace = JSON.parse(tree.readContent('/angular.json'));
-    expect(workspace.projects.foo.architect.build.options.aot).toEqual(true);
-  });
-
   describe(`update package.json`, () => {
     it(`should add build-angular to devDependencies`, async () => {
       const tree = await schematicRunner.runSchematicAsync('application', defaultOptions, workspaceTree)
@@ -388,7 +369,7 @@ describe('Application Schematic', () => {
     });
 
     it(`should create correct paths when 'newProjectRoot' is blank`, async () => {
-      const workspaceTree = schematicRunner.runSchematic('workspace', { ...workspaceOptions, newProjectRoot: '' });
+      const workspaceTree = await schematicRunner.runSchematicAsync('workspace', { ...workspaceOptions, newProjectRoot: '' }).toPromise();
       const options = { ...defaultOptions, projectRoot: undefined };
       const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
         .toPromise();

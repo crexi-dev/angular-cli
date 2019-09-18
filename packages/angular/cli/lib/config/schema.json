@@ -890,6 +890,16 @@
             "webWorkerTsConfig": {
               "type": "string",
               "description": "TypeScript configuration for Web Worker modules."
+            },
+            "crossOrigin": {
+              "type": "string",
+              "description": "Define the crossorigin attribute setting of elements that provide CORS support.",
+              "default": "none",
+              "enum": [
+                "none",
+                "anonymous",
+                "use-credentials"
+              ]
             }
           },
           "additionalProperties": false,
@@ -985,6 +995,11 @@
                       "type": "boolean",
                       "description": "If the bundle will be lazy loaded.",
                       "default": false
+                    },
+                    "inject": {
+                      "type": "boolean",
+                      "description": "If the bundle will be referenced in the HTML file.",
+                      "default": true
                     }
                   },
                   "additionalProperties": false,
@@ -1009,6 +1024,7 @@
                     "allScript",
                     "any",
                     "anyScript",
+                    "anyComponentStyle",
                     "bundle",
                     "initial"
                   ]
@@ -1102,6 +1118,14 @@
             "publicHost": {
               "type": "string",
               "description": "The URL that the browser client (or live-reload client, if enabled) should use to connect to the development server. Use for a complex dev server setup, such as one with reverse proxies."
+            },
+            "allowedHosts": {
+              "type": "array",
+              "description": "Whitelist of hosts that are allowed to access the dev server.",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
             },
             "servePath": {
               "type": "string",
@@ -1506,6 +1530,11 @@
                       "type": "boolean",
                       "description": "If the bundle will be lazy loaded.",
                       "default": false
+                    },
+                    "inject": {
+                      "type": "boolean",
+                      "description": "If the bundle will be referenced in the HTML file.",
+                      "default": true
                     }
                   },
                   "additionalProperties": false,

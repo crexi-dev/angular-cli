@@ -5,35 +5,182 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+import { normalize, virtualFs } from '@angular-devkit/core';
+import { NodeJsSyncHost } from '@angular-devkit/core/node';
+import { UnsuccessfulWorkflowExecution } from '@angular-devkit/schematics';
+import { NodeWorkflow, validateOptionsWithSchema } from '@angular-devkit/schematics/tools';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as semver from 'semver';
-import { Arguments, Option } from '../models/interface';
-import { SchematicCommand } from '../models/schematic-command';
-import { findUp } from '../utilities/find-up';
+import { Command } from '../models/command';
+import { Arguments } from '../models/interface';
+import { colors } from '../utilities/color';
 import { getPackageManager } from '../utilities/package-manager';
 import {
   PackageIdentifier,
   PackageManifest,
+  PackageMetadata,
   fetchPackageMetadata,
 } from '../utilities/package-metadata';
-import {
-  PackageTreeActual,
-  findNodeDependencies,
-  readPackageTree,
-} from '../utilities/package-tree';
+import { PackageTreeNode, findNodeDependencies, readPackageTree } from '../utilities/package-tree';
 import { Schema as UpdateCommandSchema } from './update';
 
 const npa = require('npm-package-arg');
 
 const oldConfigFileNames = ['.angular-cli.json', 'angular-cli.json'];
 
-export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
+export class UpdateCommand extends Command<UpdateCommandSchema> {
   public readonly allowMissingWorkspace = true;
 
-  async parseArguments(_schematicOptions: string[], _schema: Option[]): Promise<Arguments> {
-    return {};
+  private workflow: NodeWorkflow;
+
+  async initialize() {
+    this.workflow = new NodeWorkflow(
+      new virtualFs.ScopedHost(new NodeJsSyncHost(), normalize(this.workspace.root)),
+      {
+        packageManager: await getPackageManager(this.workspace.root),
+        root: normalize(this.workspace.root),
+      },
+    );
+
+    this.workflow.engineHost.registerOptionsTransform(
+      validateOptionsWithSchema(this.workflow.registry),
+    );
+  }
+
+  async executeSchematic(
+    collection: string,
+    schematic: string,
+    options = {},
+  ): Promise<{ success: boolean; files: Set<string> }> {
+    let error = false;
+    const logs: string[] = [];
+    const files = new Set<string>();
+
+    const reporterSubscription = this.workflow.reporter.subscribe(event => {
+      // Strip leading slash to prevent confusion.
+      const eventPath = event.path.startsWith('/') ? event.path.substr(1) : event.path;
+
+      switch (event.kind) {
+        case 'error':
+          error = true;
+          const desc = event.description == 'alreadyExist' ? 'already exists' : 'does not exist.';
+          this.logger.error(`ERROR! ${eventPath} ${desc}.`);
+          break;
+        case 'update':
+          logs.push(`${colors.whiteBright('UPDATE')} ${eventPath} (${event.content.length} bytes)`);
+          files.add(eventPath);
+          break;
+        case 'create':
+          logs.push(`${colors.green('CREATE')} ${eventPath} (${event.content.length} bytes)`);
+          files.add(eventPath);
+          break;
+        case 'delete':
+          logs.push(`${colors.yellow('DELETE')} ${eventPath}`);
+          files.add(eventPath);
+          break;
+        case 'rename':
+          logs.push(`${colors.blue('RENAME')} ${eventPath} => ${event.to}`);
+          files.add(eventPath);
+          break;
+      }
+    });
+
+    const lifecycleSubscription = this.workflow.lifeCycle.subscribe(event => {
+      if (event.kind == 'end' || event.kind == 'post-tasks-start') {
+        if (!error) {
+          // Output the logging queue, no error happened.
+          logs.forEach(log => this.logger.info(log));
+        }
+      }
+    });
+
+    // TODO: Allow passing a schematic instance directly
+    try {
+      await this.workflow
+        .execute({
+          collection,
+          schematic,
+          options,
+          logger: this.logger,
+        })
+        .toPromise();
+
+      reporterSubscription.unsubscribe();
+      lifecycleSubscription.unsubscribe();
+
+      return { success: !error, files };
+    } catch (e) {
+      if (e instanceof UnsuccessfulWorkflowExecution) {
+        this.logger.error('The update failed. See above.');
+      } else {
+        this.logger.fatal(e.message);
+      }
+
+      return { success: false, files };
+    }
+  }
+
+  async executeMigrations(
+    packageName: string,
+    collectionPath: string,
+    range: semver.Range,
+    commit = false,
+  ) {
+    const collection = this.workflow.engine.createCollection(collectionPath);
+
+    const migrations = [];
+    for (const name of collection.listSchematicNames()) {
+      const schematic = this.workflow.engine.createSchematic(name, collection);
+      const description = schematic.description as typeof schematic.description & {
+        version?: string;
+      };
+      description.version = coerceVersionNumber(description.version) || undefined;
+      if (!description.version) {
+        continue;
+      }
+
+      if (semver.satisfies(description.version, range, { includePrerelease: true })) {
+        migrations.push(description as typeof schematic.description & { version: string });
+      }
+    }
+
+    if (migrations.length === 0) {
+      return true;
+    }
+
+    const startingGitSha = this.findCurrentGitSha();
+
+    migrations.sort((a, b) => semver.compare(a.version, b.version) || a.name.localeCompare(b.name));
+
+    for (const migration of migrations) {
+      this.logger.info(
+        `** Executing migrations for version ${migration.version} of package '${packageName}' **`,
+      );
+
+      const result = await this.executeSchematic(migration.collection.name, migration.name);
+      if (!result.success) {
+        if (startingGitSha !== null) {
+          const currentGitSha = this.findCurrentGitSha();
+          if (currentGitSha !== startingGitSha) {
+            this.logger.warn(`git HEAD was at ${startingGitSha} before migrations.`);
+          }
+        }
+
+        return false;
+      }
+
+      // Commit migration
+      if (commit) {
+        let message = `migrate workspace for ${packageName}@${migration.version}`;
+        if (migration.description) {
+          message += '\n' + migration.description;
+        }
+        // TODO: Use result.files once package install tasks are accounted
+        this.createCommit(message, []);
+      }
+    }
   }
 
   // tslint:disable-next-line:no-big-function
@@ -100,7 +247,7 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       }
     }
 
-    const packageManager = getPackageManager(this.workspace.root);
+    const packageManager = await getPackageManager(this.workspace.root);
     this.logger.info(`Using package manager: '${packageManager}'`);
 
     // Special handling for Angular CLI 1.x migrations
@@ -113,9 +260,9 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       this.workspace.configFile &&
       oldConfigFileNames.includes(this.workspace.configFile)
     ) {
-          options.migrateOnly = true;
-          options.from = '1.0.0';
-        }
+      options.migrateOnly = true;
+      options.from = '1.0.0';
+    }
 
     this.logger.info('Collecting installed dependencies...');
 
@@ -126,18 +273,15 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
 
     if (options.all || packages.length === 0) {
       // Either update all packages or show status
-      return this.runSchematic({
-        collectionName: '@schematics/update',
-        schematicName: 'update',
-        dryRun: !!options.dryRun,
-        showNothingDone: false,
-        additionalOptions: {
-          force: options.force || false,
-          next: options.next || false,
-          packageManager,
-          packages: options.all ? Object.keys(rootDependencies) : [],
-        },
+      const { success } = await this.executeSchematic('@schematics/update', 'update', {
+        force: options.force || false,
+        next: options.next || false,
+        verbose: options.verbose || false,
+        packageManager,
+        packages: options.all ? Object.keys(rootDependencies) : [],
       });
+
+      return success ? 0 : 1;
     }
 
     if (options.migrateOnly) {
@@ -153,31 +297,38 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
         return 1;
       }
 
+      const from = coerceVersionNumber(options.from);
+      if (!from) {
+        this.logger.error(`"from" value [${options.from}] is not a valid version.`);
+
+        return 1;
+      }
+
       if (options.next) {
         this.logger.warn('"next" option has no effect when using "migrate-only" option.');
       }
 
       const packageName = packages[0].name;
-      let packageNode = rootDependencies[packageName];
-      if (typeof packageNode === 'string') {
+      const packageDependency = rootDependencies[packageName];
+      let packageNode = packageDependency && packageDependency.node;
+      if (packageDependency && !packageNode) {
         this.logger.error('Package found in package.json but is not installed.');
 
         return 1;
-      } else if (!packageNode) {
+      } else if (!packageDependency) {
         // Allow running migrations on transitively installed dependencies
         // There can technically be nested multiple versions
         // TODO: If multiple, this should find all versions and ask which one to use
         const child = packageTree.children.find(c => c.name === packageName);
         if (child) {
-          // A link represents a symlinked package so use the actual in this case
-          packageNode = child.isLink ? child.target : child;
+          packageNode = child;
         }
+      }
 
-        if (!packageNode) {
-          this.logger.error('Package is not installed.');
+      if (!packageNode) {
+        this.logger.error('Package is not installed.');
 
-          return 1;
-        }
+        return 1;
       }
 
       const updateMetadata = packageNode.package['ng-update'];
@@ -230,29 +381,28 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
         }
       }
 
-      return this.runSchematic({
-        collectionName: '@schematics/update',
-        schematicName: 'migrate',
-        dryRun: !!options.dryRun,
-        force: false,
-        showNothingDone: false,
-        additionalOptions: {
-          package: packageName,
-          collection: migrations,
-          from: options.from,
-          to: options.to || packageNode.package.version,
-        },
-      });
+      const migrationRange = new semver.Range(
+        '>' + from + ' <=' + (options.to || packageNode.package.version),
+      );
+
+      const result = await this.executeMigrations(
+        packageName,
+        migrations,
+        migrationRange,
+        !options.skipCommits,
+      );
+
+      return result ? 1 : 0;
     }
 
     const requests: {
       identifier: PackageIdentifier;
-      node: PackageTreeActual | string;
+      node: PackageTreeNode | string;
     }[] = [];
 
     // Validate packages actually are part of the workspace
     for (const pkg of packages) {
-      const node = rootDependencies[pkg.name];
+      const node = rootDependencies[pkg.name] && rootDependencies[pkg.name].node;
       if (!node) {
         this.logger.error(`Package '${pkg.name}' is not a dependency.`);
 
@@ -286,7 +436,9 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       try {
         // Metadata requests are internally cached; multiple requests for same name
         // does not result in additional network traffic
-        metadata = await fetchPackageMetadata(packageName, this.logger);
+        metadata = await fetchPackageMetadata(packageName, this.logger, {
+          verbose: options.verbose,
+        });
       } catch (e) {
         this.logger.error(`Error fetching metadata for '${packageName}': ` + e.message);
 
@@ -333,17 +485,43 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
       return 0;
     }
 
-    return this.runSchematic({
-      collectionName: '@schematics/update',
-      schematicName: 'update',
-      dryRun: !!options.dryRun,
-      showNothingDone: false,
-      additionalOptions: {
-        force: options.force || false,
-        packageManager,
-        packages: packagesToUpdate,
-      },
+    const { success } = await this.executeSchematic('@schematics/update', 'update', {
+      verbose: options.verbose || false,
+      force: options.force || false,
+      packageManager,
+      packages: packagesToUpdate,
+      migrateExternal: true,
     });
+
+    if (success && !options.skipCommits) {
+      this.createCommit('Angular CLI update\n' + packagesToUpdate.join('\n'), []);
+    }
+
+    // This is a temporary workaround to allow data to be passed back from the update schematic
+    // tslint:disable-next-line: no-any
+    const migrations = (global as any).externalMigrations as {
+      package: string;
+      collection: string;
+      from: string;
+      to: string;
+    }[];
+
+    if (success && migrations) {
+      for (const migration of migrations) {
+        const result = await this.executeMigrations(
+          migration.package,
+          migration.collection,
+          new semver.Range('>' + migration.from + ' <=' + migration.to),
+          !options.skipCommits,
+        );
+
+        if (!result) {
+          return 0;
+        }
+      }
+    }
+
+    return success ? 0 : 1;
   }
 
   checkCleanGit() {
@@ -364,9 +542,50 @@ export class UpdateCommand extends SchematicCommand<UpdateCommandSchema> {
           return false;
         }
       }
-
-    } catch { }
+    } catch {}
 
     return true;
   }
+
+  createCommit(message: string, files: string[]) {
+    try {
+      execSync('git add -A ' + files.join(' '), { encoding: 'utf8', stdio: 'pipe' });
+
+      execSync(`git commit --no-verify -m "${message}"`, { encoding: 'utf8', stdio: 'pipe' });
+    } catch (error) {}
+  }
+
+  findCurrentGitSha(): string | null {
+    try {
+      const result = execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: 'pipe' });
+
+      return result.trim();
+    } catch {
+      return null;
+    }
+  }
+}
+
+function coerceVersionNumber(version: string | undefined): string | null {
+  if (!version) {
+    return null;
+  }
+
+  if (!version.match(/^\d{1,30}\.\d{1,30}\.\d{1,30}/)) {
+    const match = version.match(/^\d{1,30}(\.\d{1,30})*/);
+
+    if (!match) {
+      return null;
+    }
+
+    if (!match[1]) {
+      version = version.substr(0, match[0].length) + '.0.0' + version.substr(match[0].length);
+    } else if (!match[2]) {
+      version = version.substr(0, match[0].length) + '.0' + version.substr(match[0].length);
+    } else {
+      return null;
+    }
+  }
+
+  return semver.valid(version);
 }

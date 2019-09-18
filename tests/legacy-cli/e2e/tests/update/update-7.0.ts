@@ -1,19 +1,17 @@
+import * as fs from 'fs';
 import { createProjectFromAsset } from '../../utils/assets';
 import { expectFileMatchToExist, expectFileToExist, expectFileToMatch } from '../../utils/fs';
 import { ng, noSilentNg, silentNpm } from '../../utils/process';
-import {
-  isPrereleaseCli, useBuiltPackages, useCIChrome, useCIDefaults,
-} from '../../utils/project';
+import { isPrereleaseCli, useBuiltPackages, useCIChrome, useCIDefaults } from '../../utils/project';
 import { expectToFail } from '../../utils/utils';
 
-
-export default async function () {
-  const extraUpdateArgs = await isPrereleaseCli() ? ['--next'] : [];
+export default async function() {
+  const extraUpdateArgs = (await isPrereleaseCli()) ? ['--next', '--force'] : [];
 
   // Create new project from previous version files.
   // We must use the original NPM packages to force a real update.
-  // This also means that we can only truly test updates after a release.
   await createProjectFromAsset('7.0-project', true);
+  fs.writeFileSync('.npmrc', 'registry = http://localhost:4873', 'utf8');
 
   // Update the CLI.
   // Users of CLI <7.2 will see the following warnings:
@@ -23,18 +21,17 @@ export default async function () {
 
   // Test CLI migrations.
   // Should update the lazy route syntax via update-lazy-module-paths.
-  await expectFileToMatch('src/app/app-routing.module.ts',
-    `loadChildren: () => import('./lazy/lazy.module').then(m => m.LazyModule)`);
+  await expectFileToMatch(
+    'src/app/app-routing.module.ts',
+    `loadChildren: () => import('./lazy/lazy.module').then(m => m.LazyModule)`,
+  );
   // Should update tsconfig and src/browserslist via differential-loading.
   await expectFileToMatch('tsconfig.json', `"target": "es2015",`);
   await expectToFail(() => expectFileToExist('e2e/browserlist'));
-  // Should update the build-angular version.
-  await expectFileToMatch('package.json', `"@angular-devkit/build-angular": "~0.8`);
   // Should rename codelyzer rules.
   await expectFileToMatch('tslint.json', `use-lifecycle-interface`);
   // Unnecessary es6 polyfills should be removed via drop-es6-polyfills.
-  await expectToFail(() => expectFileToMatch('src/polyfills.ts',
-   `import 'core-js/es6/symbol';`));
+  await expectToFail(() => expectFileToMatch('src/polyfills.ts', `import 'core-js/es6/symbol';`));
   await expectToFail(() => expectFileToMatch('src/polyfills.ts', `import 'core-js/es6/set';`));
 
   // Use the packages we are building in this commit, and CI Chrome.

@@ -17,10 +17,16 @@ export interface PublishArgs {
   tag?: string;
   branchCheck?: boolean;
   versionCheck?: boolean;
+  registry?: string;
 }
 
 
 function _exec(command: string, args: string[], opts: { cwd?: string }, logger: logging.Logger) {
+  if (process.platform.startsWith('win')) {
+    args.unshift('/c', command);
+    command = 'cmd.exe';
+  }
+
   const { status, error, stderr, stdout } = spawnSync(command, args, { ...opts });
 
   if (status != 0) {
@@ -106,7 +112,15 @@ export default async function (args: PublishArgs, logger: logging.Logger) {
       .then(() => {
         logger.info(name);
 
-        return _exec('npm', ['publish'].concat(args.tag ? ['--tag', args.tag] : []), {
+        const publishArgs = ['publish'];
+        if (args.tag) {
+          publishArgs.push('--tag', args.tag);
+        }
+        if (args.registry) {
+          publishArgs.push('--registry', args.registry);
+        }
+
+        return _exec('npm', publishArgs, {
           cwd: pkg.dist,
         }, logger);
       })

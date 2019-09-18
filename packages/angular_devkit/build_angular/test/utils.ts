@@ -5,32 +5,27 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-
-import {
-  Architect,
-  BuilderOutput,
-  ScheduleOptions,
-  Target,
-} from '@angular-devkit/architect';
+import { Architect, BuilderOutput, ScheduleOptions, Target } from '@angular-devkit/architect';
 import { WorkspaceNodeModulesArchitectHost } from '@angular-devkit/architect/node';
 import { TestProjectHost, TestingArchitectHost } from '@angular-devkit/architect/testing';
 import {
   Path,
-  experimental,
   getSystemPath,
   join,
   json,
   normalize,
   schema,
   virtualFs,
+  workspaces,
 } from '@angular-devkit/core';
 import { BrowserBuilderOutput } from '../src/browser';
 
+export const veEnabled = process.argv.includes('--ve');
 
 const devkitRoot = normalize((global as any)._DevKitRoot); // tslint:disable-line:no-any
 export const workspaceRoot = join(
   devkitRoot,
-  'tests/angular_devkit/build_angular/hello-world-app/',
+  `tests/angular_devkit/build_angular/hello-world-app${veEnabled ? '-ve' : ''}/`,
 );
 export const host = new TestProjectHost(workspaceRoot);
 export const outputPath: Path = normalize('dist');
@@ -42,13 +37,15 @@ export const karmaTargetSpec = { project: 'app', target: 'test' };
 export const tslintTargetSpec = { project: 'app', target: 'lint' };
 export const protractorTargetSpec = { project: 'app-e2e', target: 'e2e' };
 
-
 export async function createArchitect(workspaceRoot: Path) {
   const registry = new schema.CoreSchemaRegistry();
   registry.addPostTransform(schema.transforms.addUndefinedDefaults);
   const workspaceSysPath = getSystemPath(workspaceRoot);
 
-  const workspace = await experimental.workspace.Workspace.fromPath(host, host.root(), registry);
+  const { workspace } = await workspaces.readWorkspace(
+    workspaceSysPath,
+    workspaces.createWorkspaceHost(host),
+  );
   const architectHost = new TestingArchitectHost(
     workspaceSysPath,
     workspaceSysPath,
@@ -69,7 +66,7 @@ export async function browserBuild(
   target: Target,
   overrides?: json.JsonObject,
   scheduleOptions?: ScheduleOptions,
-): Promise<{ output: BuilderOutput; files: { [file: string]: string } }> {
+): Promise<{ output: BuilderOutput; files: { [file: string]: Promise<string> } }> {
   const run = await architect.scheduleTarget(target, overrides, scheduleOptions);
   const output = (await run.result) as BrowserBuilderOutput;
   expect(output.success).toBe(true);

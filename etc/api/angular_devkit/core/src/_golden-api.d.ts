@@ -243,7 +243,7 @@ export declare function decamelize(str: string): string;
 
 export declare function deepCopy<T extends any>(value: T): T;
 
-export declare type DefinitionCollectionListener<V> = (name: string, action: 'add' | 'remove' | 'replace', newValue: V | undefined, oldValue: V | undefined) => void;
+export declare type DefinitionCollectionListener<V extends object> = (name: string, action: 'add' | 'remove' | 'replace', newValue: V | undefined, oldValue: V | undefined, collection: DefinitionCollection<V>) => void;
 
 export declare class DependencyNotFoundException extends BaseException {
     constructor();
@@ -614,7 +614,7 @@ export declare class MultiAnalytics implements Analytics {
 export declare enum NgCliAnalyticsDimensions {
     CpuCount = 1,
     CpuSpeed = 2,
-    RamInMegabytes = 3,
+    RamInGigabytes = 3,
     NodeVersion = 4,
     NgAddCollection = 6,
     NgBuildBuildEventLog = 7,
@@ -626,7 +626,7 @@ export declare const NgCliAnalyticsDimensionsFlagInfo: {
 };
 
 export declare enum NgCliAnalyticsMetrics {
-    UNUSED_1 = 1,
+    NgComponentCount = 1,
     UNUSED_2 = 2,
     UNUSED_3 = 3,
     UNUSED_4 = 4,
@@ -798,7 +798,7 @@ export interface PromptDefinition {
     multiselect?: boolean;
     raw?: string | JsonObject;
     type: string;
-    validator?: (value: string) => boolean | string | Promise<boolean | string>;
+    validator?: (value: JsonValue) => boolean | string | Promise<boolean | string>;
 }
 
 export declare type PromptProvider = (definitions: Array<PromptDefinition>) => SubscribableOrPromise<{
@@ -992,6 +992,7 @@ export declare class SimpleMemoryHost implements Host<{}> {
     list(path: Path): Observable<PathFragment[]>;
     read(path: Path): Observable<FileBuffer>;
     rename(from: Path, to: Path): Observable<void>;
+    reset(): void;
     stat(path: Path): Observable<Stats<{}> | null> | null;
     watch(path: Path, options?: HostWatchOptions): Observable<HostWatchEvent> | null;
     write(path: Path, content: FileBuffer): Observable<void>;

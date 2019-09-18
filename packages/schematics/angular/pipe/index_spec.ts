@@ -42,7 +42,7 @@ describe('Pipe Schematic', () => {
   };
   let appTree: UnitTestTree;
   beforeEach(async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync('application', appOptions, appTree)
       .toPromise();
   });
@@ -57,6 +57,8 @@ describe('Pipe Schematic', () => {
     const moduleContent = getFileContent(tree, '/projects/bar/src/app/app.module.ts');
     expect(moduleContent).toMatch(/import.*Foo.*from '.\/foo.pipe'/);
     expect(moduleContent).toMatch(/declarations:\s*\[[^\]]+?,\r?\n\s+FooPipe\r?\n/m);
+    const fileContent = tree.readContent('/projects/bar/src/app/foo.pipe.ts');
+    expect(fileContent).toContain('transform(value: any, ...args: any[])');
   });
 
   it('should import into a specified module', async () => {

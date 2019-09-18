@@ -168,7 +168,7 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
     schematics['@schematics/angular:component'] = componentSchematicsOptions;
   }
 
-  if (options.skipTests === true) {
+  if (options.skipTests || options.minimal) {
     ['class', 'component', 'directive', 'guard', 'module', 'pipe', 'service'].forEach((type) => {
       if (!(`@schematics/angular:${type}` in schematics)) {
         schematics[`@schematics/angular:${type}`] = {};
@@ -194,7 +194,7 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
           main: `${sourceRoot}/main.ts`,
           polyfills: `${sourceRoot}/polyfills.ts`,
           tsConfig: `${projectRoot}tsconfig.app.json`,
-          aot: !!options.enableIvy,
+          aot: true,
           assets: [
             `${sourceRoot}/favicon.ico`,
             `${sourceRoot}/assets`,
@@ -215,14 +215,19 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
             sourceMap: false,
             extractCss: true,
             namedChunks: false,
-            aot: true,
             extractLicenses: true,
             vendorChunk: false,
             buildOptimizer: true,
-            budgets: [{
+            budgets: [
+            {
               type: 'initial',
               maximumWarning: '2mb',
               maximumError: '5mb',
+            },
+            {
+              type: 'anyComponentStyle',
+              maximumWarning: '6kb',
+              maximumError: '10kb',
             }],
           },
         },
@@ -300,7 +305,6 @@ export default function (options: ApplicationOptions): Rule {
       throw new SchematicsException(`Invalid options, "name" is required.`);
     }
     validateProjectName(options.name);
-    options.prefix = options.prefix || 'app';
     const appRootSelector = `${options.prefix}-root`;
     const componentOptions: Partial<ComponentOptions> = !options.minimal ?
       {

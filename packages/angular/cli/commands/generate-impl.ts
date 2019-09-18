@@ -5,20 +5,19 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-
-import { terminal } from '@angular-devkit/core';
 import { Arguments, SubCommandDescription } from '../models/interface';
 import { SchematicCommand } from '../models/schematic-command';
+import { colors } from '../utilities/color';
 import { parseJsonSchemaToSubCommandDescription } from '../utilities/json-schema';
 import { Schema as GenerateCommandSchema } from './generate';
 
 export class GenerateCommand extends SchematicCommand<GenerateCommandSchema> {
   // Allows us to resolve aliases before reporting analytics
-  longSchematicName: string|undefined;
+  longSchematicName: string | undefined;
 
   async initialize(options: GenerateCommandSchema & Arguments) {
     // Fill up the schematics property of the command description.
-    const [collectionName, schematicName] = this.parseSchematicInfo(options);
+    const [collectionName, schematicName] = await this.parseSchematicInfo(options);
     this.collectionName = collectionName;
     this.schematicName = schematicName;
 
@@ -46,7 +45,7 @@ export class GenerateCommand extends SchematicCommand<GenerateCommandSchema> {
         continue;
       }
 
-      if (this.getDefaultSchematicCollection() == collectionName) {
+      if ((await this.getDefaultSchematicCollection()) == collectionName) {
         subcommands[name] = subcommand;
       } else {
         subcommands[`${collectionName}:${name}`] = subcommand;
@@ -79,7 +78,7 @@ export class GenerateCommand extends SchematicCommand<GenerateCommandSchema> {
     paths: string[],
     options: GenerateCommandSchema & Arguments,
   ): Promise<void> {
-    const [collectionName, schematicName] = this.parseSchematicInfo(options);
+    const [collectionName, schematicName] = await this.parseSchematicInfo(options);
 
     if (!schematicName || !collectionName) {
       return;
@@ -92,15 +91,15 @@ export class GenerateCommand extends SchematicCommand<GenerateCommandSchema> {
     );
   }
 
-  private parseSchematicInfo(options: { schematic?: string }): [string, string | undefined] {
-    let collectionName = this.getDefaultSchematicCollection();
+  private async parseSchematicInfo(options: {
+    schematic?: string;
+  }): Promise<[string, string | undefined]> {
+    let collectionName = await this.getDefaultSchematicCollection();
 
     let schematicName = options.schematic;
 
-    if (schematicName) {
-      if (schematicName.includes(':')) {
-        [collectionName, schematicName] = schematicName.split(':', 2);
-      }
+    if (schematicName && schematicName.includes(':')) {
+      [collectionName, schematicName] = schematicName.split(':', 2);
     }
 
     return [collectionName, schematicName];
@@ -114,7 +113,7 @@ export class GenerateCommand extends SchematicCommand<GenerateCommandSchema> {
     const subcommand = this.description.options.filter(x => x.subcommands)[0];
     if (Object.keys((subcommand && subcommand.subcommands) || {}).length == 1) {
       this.logger.info(`\nTo see help for a schematic run:`);
-      this.logger.info(terminal.cyan(`  ng generate <schematic> --help`));
+      this.logger.info(colors.cyan(`  ng generate <schematic> --help`));
     }
 
     return 0;

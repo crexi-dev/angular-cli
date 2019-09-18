@@ -11,16 +11,15 @@ import { latestVersions } from '../../utility/latest-versions';
 
 export function updateDependencies() {
   return (host: Tree) => {
-
     const dependenciesToUpdate: Record<string, string> = {
+      '@angular/pwa': latestVersions.AngularPWA,
       '@angular-devkit/build-angular': latestVersions.DevkitBuildAngular,
       '@angular-devkit/build-ng-packagr': latestVersions.DevkitBuildNgPackagr,
       '@angular-devkit/build-webpack': latestVersions.DevkitBuildWebpack,
       'zone.js': latestVersions.ZoneJs,
-      'tsickle': latestVersions.tsickle,
+      tsickle: '^0.37.0',
       'ng-packagr': latestVersions.ngPackagr,
-      // FIXME: change to ^2.3.2 as soon as it's released with the pr208 fix
-      'web-animations-js': 'github:angular/web-animations-js#release_pr208',
+      'web-animations-js': '^2.3.2',
     };
 
     for (const [name, version] of Object.entries(dependenciesToUpdate)) {
@@ -29,15 +28,12 @@ export function updateDependencies() {
         continue;
       }
 
-      addPackageJsonDependency(
-        host,
-        {
-          type: current.type,
-          name,
-          version,
-          overwrite: true,
-        },
-      );
+      addPackageJsonDependency(host, {
+        type: current.type,
+        name,
+        version,
+        overwrite: true,
+      });
     }
   };
 }
