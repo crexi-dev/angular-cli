@@ -11,58 +11,29 @@ import { latestVersions } from '../../utility/latest-versions';
 
 export function updateDependencies() {
   return (host: Tree) => {
-    let current = getPackageJsonDependency(host, '@angular-devkit/build-angular');
-    if (current && current.version !== latestVersions.DevkitBuildAngular) {
-      addPackageJsonDependency(
-        host,
-        {
-          type: current.type,
-          name: '@angular-devkit/build-angular',
-          version: latestVersions.DevkitBuildAngular,
-          overwrite: true,
-        },
-      );
-    }
+    const dependenciesToUpdate: Record<string, string> = {
+      '@angular/pwa': latestVersions.AngularPWA,
+      '@angular-devkit/build-angular': latestVersions.DevkitBuildAngular,
+      '@angular-devkit/build-ng-packagr': latestVersions.DevkitBuildNgPackagr,
+      '@angular-devkit/build-webpack': latestVersions.DevkitBuildWebpack,
+      'zone.js': latestVersions.ZoneJs,
+      tsickle: '^0.37.0',
+      'ng-packagr': latestVersions.ngPackagr,
+      'web-animations-js': '^2.3.2',
+    };
 
-    current = getPackageJsonDependency(host, '@angular-devkit/build-ng-packagr');
-    if (current && current.version !== latestVersions.DevkitBuildNgPackagr) {
-      addPackageJsonDependency(
-        host,
-        {
-          type: current.type,
-          name: '@angular-devkit/build-ng-packagr',
-          version: latestVersions.DevkitBuildNgPackagr,
-          overwrite: true,
-        },
-      );
-    }
+    for (const [name, version] of Object.entries(dependenciesToUpdate)) {
+      const current = getPackageJsonDependency(host, name);
+      if (!current || current.version === version) {
+        continue;
+      }
 
-    current = getPackageJsonDependency(host, 'zone.js');
-    if (current && current.version !== latestVersions.ZoneJs) {
-      addPackageJsonDependency(
-        host,
-        {
-          type: current.type,
-          name: 'zone.js',
-          version: latestVersions.ZoneJs,
-          overwrite: true,
-        },
-      );
-    }
-
-    // FIXME: change to ^2.3.2 as soon as it's released with the pr208 fix
-    const webAnimationsJsVersion = 'github:angular/web-animations-js#release_pr208';
-    current = getPackageJsonDependency(host, 'web-animations-js');
-    if (current && current.version !== webAnimationsJsVersion) {
-      addPackageJsonDependency(
-        host,
-        {
-          type: current.type,
-          name: 'web-animations-js',
-          version: webAnimationsJsVersion,
-          overwrite: true,
-        },
-      );
+      addPackageJsonDependency(host, {
+        type: current.type,
+        name,
+        version,
+        overwrite: true,
+      });
     }
   };
 }
