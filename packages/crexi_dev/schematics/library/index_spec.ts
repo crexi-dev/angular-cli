@@ -7,7 +7,7 @@
  */
 // tslint:disable:no-big-function
 import { SchematicTestRunner, UnitTestTree } from '@angular-devkit/schematics/testing';
-import { getFileContent } from '../../angular/utility/test';
+import { getFileContent } from '../utility/test';
 import { Schema as ComponentOptions } from '../component/schema';
 import { latestVersions } from '../utility/latest-versions';
 import { Schema as WorkspaceOptions } from '../workspace/schema';
