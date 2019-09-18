@@ -40,7 +40,7 @@ describe('NgPackagr Builder', () => {
     const architectHost = new TestingArchitectHost(
       workspaceSysPath,
       workspaceSysPath,
-      new WorkspaceNodeModulesArchitectHost(workspace, workspaceSysPath),
+      new WorkspaceNodeModulesArchitectHost(workspace, workspaceSysPath) as any,
     );
     architect = new Architect(architectHost, registry);
   });

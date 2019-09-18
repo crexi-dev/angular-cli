@@ -7,7 +7,7 @@
   "typings": "src/index.d.ts",
   "builders": "builders.json",
   "dependencies": {
-    "@angular-devkit/architect": "~0.803.3",
+    "@angular-devkit/architect": "0.0.0",
     "rxjs": "6.4.0"
   },
   "peerDependencies": {
@@ -16,8 +16,8 @@
   "devDependencies": {
     "@angular/compiler": "~8.2.0",
     "@angular/compiler-cli": "~8.2.0",
-    "@angular-devkit/core": "~8.2.0",
-    "@crexi-dev/ng-packagr": "~5.5.1",
-    "tslib": "^1.9.0"
+    "@angular-devkit/core": "0.0.0",
+    "@crexi-dev/ng-packagr": "~5.5.4",
+    "tslib": "^1.10.0"
   }
 }
