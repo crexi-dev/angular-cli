@@ -33,9 +33,9 @@ describe('Browser Builder scripts array', () => {
     'src/binput-script.js',
     'src/ainput-script.js',
     'src/cinput-script.js',
-    { input: 'src/lazy-script.js', bundleName: 'lazy-script', lazy: true },
+    { input: 'src/lazy-script.js', bundleName: 'lazy-script', inject: false },
     { input: 'src/pre-rename-script.js', bundleName: 'renamed-script' },
-    { input: 'src/pre-rename-lazy-script.js', bundleName: 'renamed-lazy-script', lazy: true },
+    { input: 'src/pre-rename-lazy-script.js', bundleName: 'renamed-lazy-script', inject: false },
   ];
 
   const target = { project: 'app', target: 'build' };
@@ -48,18 +48,18 @@ describe('Browser Builder scripts array', () => {
   afterEach(async () => host.restore().toPromise());
 
   it('works', async () => {
-    const matches: { [path: string]: string } = {
+    const matches: Record<string, string> = {
       'scripts.js': 'input-script',
       'lazy-script.js': 'lazy-script',
       'renamed-script.js': 'pre-rename-script',
       'renamed-lazy-script.js': 'pre-rename-lazy-script',
       'main.js': 'input-script',
-      'index.html': '<script src="runtime.js"></script>'
-        + '<script src="polyfills.js"></script>'
-        + '<script src="scripts.js"></script>'
-        + '<script src="renamed-script.js"></script>'
-        + '<script src="vendor.js"></script>'
-        + '<script src="main.js"></script>',
+      'index.html': '<script src="runtime.js" defer></script>'
+        + '<script src="polyfills.js" defer></script>'
+        + '<script src="scripts.js" defer></script>'
+        + '<script src="renamed-script.js" defer></script>'
+        + '<script src="vendor.js" defer></script>'
+        + '<script src="main.js" defer></script>',
     };
 
     host.writeMultipleFiles(scripts);
@@ -71,8 +71,41 @@ describe('Browser Builder scripts array', () => {
       scripts: getScriptsOption(),
     } as {});
 
-    for (const fileName of Object.keys(matches)) {
-      expect(await files[fileName]).toMatch(matches[fileName]);
+    for (const [fileName, content] of Object.entries(matches)) {
+      expect(await files[fileName]).toMatch(content);
+    }
+  });
+
+  it('works in watch mode with differential loading', async () => {
+    const matches: Record<string, string> = {
+      'scripts.js': 'input-script',
+      'lazy-script.js': 'lazy-script',
+      'renamed-script.js': 'pre-rename-script',
+      'renamed-lazy-script.js': 'pre-rename-lazy-script',
+      'main.js': 'input-script',
+      'index.html': '<script src="runtime.js" type="module"></script>'
+        + '<script src="polyfills.js" type="module"></script>'
+        + '<script src="scripts.js" defer></script>'
+        + '<script src="renamed-script.js" defer></script>'
+        + '<script src="vendor.js" type="module"></script>'
+        + '<script src="main.js" type="module"></script>',
+    };
+
+    host.writeMultipleFiles(scripts);
+    host.appendToFile('src/main.ts', '\nimport \'./input-script.js\';');
+
+    // Enable differential loading
+    host.appendToFile('browserslist', '\nIE 10');
+
+    // Remove styles so we don't have to account for them in the index.html order check.
+    const { files } = await browserBuild(architect, host, target, {
+      styles: [],
+      scripts: getScriptsOption(),
+      watch: true,
+    } as {});
+
+    for (const [fileName, content] of Object.entries(matches)) {
+      expect(await files[fileName]).toMatch(content);
     }
   });
 

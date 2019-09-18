@@ -12,7 +12,7 @@ nodejs_binary(
     data = [
         "quicktype_runner.js",
     ],
-    entry_point = "angular_cli/tools/quicktype_runner.js",
+    entry_point = "quicktype_runner.js",
     install_source_map_support = False,
     node_modules = "@npm//quicktype-core",
     templated_args = [
@@ -21,4 +21,17 @@ nodejs_binary(
         "--node_options=--preserve-symlinks",
     ],
 )
+
+platform(
+    name = "rbe_ubuntu1604-angular",
+    parents = ["@rbe_ubuntu1604_angular//config:platform"],
+    remote_execution_properties = """
+        {PARENT_REMOTE_EXECUTION_PROPERTIES}
+        properties: {
+            name: "dockerAddCapabilities"
+            value: "SYS_ADMIN"
+        }
+        """,
+)
+
 # @external_end

@@ -41,7 +41,7 @@ describe('Web Worker Schematic', () => {
   };
 
   beforeEach(async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync('application', appOptions, appTree)
       .toPromise();
   });
@@ -72,6 +72,18 @@ describe('Web Worker Schematic', () => {
   });
 
   it('should add exclusions to tsconfig.app.json', async () => {
+    const oldTsConfig = {
+      extends: '../../tsconfig.json',
+      include: [
+        'src/**/*.ts',
+      ],
+      exclude: [
+        'src/test.ts',
+        'src/**/*.spec.ts',
+      ],
+    };
+    appTree.overwrite('projects/bar/tsconfig.app.json', JSON.stringify(oldTsConfig, undefined, 2));
+
     const tree = await schematicRunner.runSchematicAsync('web-worker', defaultOptions, appTree)
       .toPromise();
     const { exclude } = JSON.parse(tree.readContent('/projects/bar/tsconfig.app.json'));
@@ -113,5 +125,29 @@ describe('Web Worker Schematic', () => {
 
     const { compilerOptions } = JSON.parse(tree.readContent(path));
     expect(compilerOptions.outDir).toBe('./out-tsc/worker');
+  });
+
+  it('supports pre version 8 structure', async () => {
+    const workspace = JSON.parse(appTree.readContent('/angular.json'));
+    const tsConfigPath = '/projects/bar/src/tsconfig.app.json';
+    workspace.projects.bar.architect.build.options.tsConfig = tsConfigPath;
+    appTree.overwrite('/angular.json', JSON.stringify(workspace));
+
+    const oldTsConfig = {
+      extends: '../../../tsconfig.json',
+      include: [
+        '**/*.ts',
+      ],
+      exclude: [
+        'test.ts',
+        '**/*.spec.ts',
+      ],
+    };
+    appTree.create('projects/bar/src/tsconfig.app.json', JSON.stringify(oldTsConfig, undefined, 2));
+
+    const tree = await schematicRunner.runSchematicAsync('web-worker', defaultOptions, appTree)
+      .toPromise();
+    const { exclude } = JSON.parse(tree.readContent(tsConfigPath));
+    expect(exclude).toContain('**/*.worker.ts');
   });
 });

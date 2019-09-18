@@ -11,7 +11,6 @@ export * from './logging';
 export * from './multi';
 export * from './noop';
 
-
 /**
  * MAKE SURE TO KEEP THIS IN SYNC WITH THE TABLE AND CONTENT IN `/docs/design/analytics.md`.
  * WE LIST THOSE DIMENSIONS (AND MORE).
@@ -23,7 +22,7 @@ export * from './noop';
 export enum NgCliAnalyticsDimensions {
   CpuCount = 1,
   CpuSpeed = 2,
-  RamInMegabytes = 3,
+  RamInGigabytes = 3,
   NodeVersion = 4,
   NgAddCollection = 6,
   NgBuildBuildEventLog = 7,
@@ -31,7 +30,7 @@ export enum NgCliAnalyticsDimensions {
 }
 
 export enum NgCliAnalyticsMetrics {
-  UNUSED_1 = 1,
+  NgComponentCount = 1,
   UNUSED_2 = 2,
   UNUSED_3 = 3,
   UNUSED_4 = 4,
@@ -53,7 +52,7 @@ export enum NgCliAnalyticsMetrics {
 export const NgCliAnalyticsDimensionsFlagInfo: { [name: string]: [string, string] } = {
   CpuCount: ['CPU Count', 'number'],
   CpuSpeed: ['CPU Speed', 'number'],
-  RamInMegabytes: ['RAM (In MB)', 'number'],
+  RamInGigabytes: ['RAM (In GB)', 'number'],
   NodeVersion: ['Node Version', 'number'],
   NgAddCollection: ['--collection', 'string'],
   NgBuildBuildEventLog: ['--buildEventLog', 'boolean'],
@@ -63,7 +62,7 @@ export const NgCliAnalyticsDimensionsFlagInfo: { [name: string]: [string, string
 // This table is used when generating the analytics.md file. It should match the enum above
 // or the validate-user-analytics script will fail.
 export const NgCliAnalyticsMetricsFlagInfo: { [name: string]: [string, string] } = {
-  UNUSED_1: ['UNUSED_1', 'none'],
+  NgComponentCount: ['NgComponentCount', 'number'],
   UNUSED_2: ['UNUSED_2', 'none'],
   UNUSED_3: ['UNUSED_3', 'none'],
   UNUSED_4: ['UNUSED_4', 'none'],

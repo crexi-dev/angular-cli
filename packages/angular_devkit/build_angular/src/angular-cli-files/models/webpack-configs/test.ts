@@ -33,7 +33,7 @@ export function getTestConfig(
   if (buildOptions.codeCoverage) {
     const codeCoverageExclude = buildOptions.codeCoverageExclude;
     const exclude: (string | RegExp)[] = [
-      /\.(e2e|spec)\.ts$/,
+      /\.(e2e|spec)\.tsx?$/,
       /node_modules/,
     ];
 
@@ -47,7 +47,7 @@ export function getTestConfig(
     }
 
     extraRules.push({
-      test: /\.(js|ts)$/,
+      test: /\.(jsx?|tsx?)$/,
       loader: 'istanbul-instrumenter-loader',
       options: { esModules: true },
       enforce: 'post',
@@ -101,7 +101,5 @@ export function getTestConfig(
         },
       },
     },
-    // Webpack typings don't yet include the function form for 'chunks',
-    // or the built-in vendors cache group.
-  } as {} as webpack.Configuration;
+  };
 }

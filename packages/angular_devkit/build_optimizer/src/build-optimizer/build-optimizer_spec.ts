@@ -54,7 +54,6 @@ describe('build-optimizer', () => {
         }());
         var RenderType_MdOption = ɵcrt({ encapsulation: 2, styles: styles_MdOption});
       `;
-      // tslint:disable:max-line-length
       const output = tags.oneLine`
         import { __extends } from "tslib";
         ${imports}
@@ -98,6 +97,111 @@ describe('build-optimizer', () => {
 
       const boOutput = buildOptimizer({ content: input, isSideEffectFree: true });
       expect(tags.oneLine`${boOutput.content}`).toEqual(output);
+      expect(boOutput.emitSkipped).toEqual(false);
+    });
+
+    it('should not add pure comments to tslib helpers', () => {
+      const input = tags.stripIndent`
+        class LanguageState {
+        }
+
+        LanguageState.ctorParameters = () => [
+            { type: TranslateService },
+            { type: undefined, decorators: [{ type: Inject, args: [LANGUAGE_CONFIG,] }] }
+        ];
+
+        __decorate([
+            Action(CheckLanguage),
+            __metadata("design:type", Function),
+            __metadata("design:paramtypes", [Object]),
+            __metadata("design:returntype", void 0)
+        ], LanguageState.prototype, "checkLanguage", null);
+      `;
+
+      const output = tags.oneLine`
+        let LanguageState = /*@__PURE__*/ (() => {
+          class LanguageState {
+          }
+
+          __decorate([
+              Action(CheckLanguage),
+              __metadata("design:type", Function),
+              __metadata("design:paramtypes", [Object]),
+              __metadata("design:returntype", void 0)
+          ], LanguageState.prototype, "checkLanguage", null);
+          return LanguageState;
+       })();
+      `;
+
+      const boOutput = buildOptimizer({ content: input, isSideEffectFree: true });
+      expect(tags.oneLine`${boOutput.content}`).toEqual(output);
+      expect(boOutput.emitSkipped).toEqual(false);
+    });
+
+    it('should not add pure comments to tslib helpers with $ and number suffix', () => {
+      const input = tags.stripIndent`
+        class LanguageState {
+        }
+
+        LanguageState.ctorParameters = () => [
+            { type: TranslateService },
+            { type: undefined, decorators: [{ type: Inject, args: [LANGUAGE_CONFIG,] }] }
+        ];
+
+        __decorate$1([
+            Action(CheckLanguage),
+            __metadata("design:type", Function),
+            __metadata("design:paramtypes", [Object]),
+            __metadata("design:returntype", void 0)
+        ], LanguageState.prototype, "checkLanguage", null);
+      `;
+
+      const output = tags.oneLine`
+        let LanguageState = /*@__PURE__*/ (() => {
+          class LanguageState {
+          }
+
+          __decorate$1([
+              Action(CheckLanguage),
+              __metadata("design:type", Function),
+              __metadata("design:paramtypes", [Object]),
+              __metadata("design:returntype", void 0)
+          ], LanguageState.prototype, "checkLanguage", null);
+          return LanguageState;
+       })();
+      `;
+
+      const boOutput = buildOptimizer({ content: input, isSideEffectFree: true });
+      expect(tags.oneLine`${boOutput.content}`).toEqual(output);
+      expect(boOutput.emitSkipped).toEqual(false);
+    });
+
+    it('should not wrap classes which had all static properties dropped in IIFE', () => {
+      const classDeclaration = tags.oneLine`
+        import { Injectable } from '@angular/core';
+
+        class Platform {
+          constructor(_doc) {
+          }
+          init() {
+          }
+        }
+      `;
+      const input = tags.oneLine`
+        ${classDeclaration}
+
+        Platform.decorators = [
+            { type: Injectable }
+        ];
+
+        /** @nocollapse */
+        Platform.ctorParameters = () => [
+            { type: undefined, decorators: [{ type: Inject, args: [DOCUMENT] }] }
+        ];
+      `;
+
+      const boOutput = buildOptimizer({ content: input, isSideEffectFree: true });
+      expect(tags.oneLine`${boOutput.content}`).toEqual(classDeclaration);
       expect(boOutput.emitSkipped).toEqual(false);
     });
   });

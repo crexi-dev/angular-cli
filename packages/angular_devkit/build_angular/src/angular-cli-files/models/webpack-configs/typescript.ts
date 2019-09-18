@@ -7,6 +7,7 @@
  */
 // tslint:disable
 // TODO: cleanup this file, it's copied as is from Angular CLI.
+import { buildOptimizerLoaderPath } from '@angular-devkit/build-optimizer';
 import * as path from 'path';
 import {
   AngularCompilerPlugin,
@@ -14,7 +15,7 @@ import {
   NgToolsLoader,
   PLATFORM
 } from '@ngtools/webpack';
-import { buildOptimizerLoader } from './common';
+import { fullDifferential } from '../../../utils';
 import { WebpackConfigOptions, BuildOptions } from '../build-options';
 
 function _pluginOptionsOverrides(
@@ -32,7 +33,7 @@ function _pluginOptionsOverrides(
     }
   }
 
-  if (buildOptions.scriptTargetOverride) {
+  if (fullDifferential && buildOptions.scriptTargetOverride) {
     compilerOptions.target = buildOptions.scriptTargetOverride;
   }
 
@@ -113,7 +114,7 @@ export function getAotConfig(wco: WebpackConfigOptions, i18nExtract = false) {
   const loaders: any[] = [NgToolsLoader];
   if (buildOptions.buildOptimizer) {
     loaders.unshift({
-      loader: buildOptimizerLoader,
+      loader: buildOptimizerLoaderPath,
       options: { sourceMap: buildOptions.sourceMap.scripts }
     });
   }

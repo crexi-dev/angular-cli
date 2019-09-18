@@ -17,7 +17,6 @@ function getJsonFileContent(tree: UnitTestTree, path: string) {
   return JSON.parse(tree.readContent(path));
 }
 
-// tslint:disable:max-line-length
 describe('Library Schematic', () => {
   const schematicRunner = new SchematicTestRunner(
     '@schematics/ng_packagr',
@@ -37,8 +36,8 @@ describe('Library Schematic', () => {
   };
 
   let workspaceTree: UnitTestTree;
-  beforeEach(() => {
-    workspaceTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+  beforeEach(async () => {
+    workspaceTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
   });
 
   it('should create files', async () => {
@@ -50,6 +49,8 @@ describe('Library Schematic', () => {
       '/projects/foo/package.json',
       '/projects/foo/README.md',
       '/projects/foo/tslint.json',
+      '/projects/foo/tsconfig.lib.json',
+      '/projects/foo/tsconfig.lib.prod.json',
       '/projects/foo/src/test.ts',
       '/projects/foo/src/my-index.ts',
       '/projects/foo/src/lib/foo.module.ts',
@@ -133,7 +134,7 @@ describe('Library Schematic', () => {
   });
 
   it('should handle a pascalCasedName', async () => {
-    const options = {...defaultOptions, name: 'pascalCasedName'};
+    const options = { ...defaultOptions, name: 'pascalCasedName' };
     const tree = await schematicRunner.runSchematicAsync('library', options, workspaceTree).toPromise();
     const config = getJsonFileContent(tree, '/angular.json');
     const project = config.projects.pascalCasedName;
@@ -303,7 +304,7 @@ describe('Library Schematic', () => {
   });
 
   it(`should create correct paths when 'newProjectRoot' is blank`, async () => {
-    const workspaceTree = schematicRunner.runSchematic('workspace', { ...workspaceOptions, newProjectRoot: '' });
+    const workspaceTree = await schematicRunner.runSchematicAsync('workspace', { ...workspaceOptions, newProjectRoot: '' }).toPromise();
     const tree = await schematicRunner.runSchematicAsync('library', defaultOptions, workspaceTree)
       .toPromise();
     const config = JSON.parse(tree.readContent('/angular.json'));
@@ -317,5 +318,13 @@ describe('Library Schematic', () => {
     expect(appTsConfig.extends).toEqual('../tsconfig.json');
     const specTsConfig = JSON.parse(tree.readContent('/foo/tsconfig.spec.json'));
     expect(specTsConfig.extends).toEqual('../tsconfig.json');
+  });
+
+  it(`should add 'production' configuration`, async () => {
+    const tree = await schematicRunner.runSchematicAsync('library', defaultOptions, workspaceTree)
+      .toPromise();
+
+    const workspace = JSON.parse(tree.readContent('/angular.json'));
+    expect(workspace.projects.foo.architect.build.configurations.production).toBeDefined();
   });
 });

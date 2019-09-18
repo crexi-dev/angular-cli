@@ -31,10 +31,10 @@ export default async function () {
   // Can't use the `ng` helper because somewhere the environment gets
   // stuck to the first build done
   const argv = getGlobalVariable('argv');
-  const ivyProject = argv['ivy'];
-  const bootstrapRegExp = ivyProject
-    ? /bootstrapModule\([a-zA-Z]+\)\./
-    : /bootstrapModuleFactory\([a-zA-Z]+\)\./;
+  const veProject = argv['ve'];
+  const bootstrapRegExp = veProject
+    ? /bootstrapModuleFactory\(.?[a-zA-Z]+\)\./
+    : /bootstrapModule\(.?[a-zA-Z]+\)\./;
 
   await ng('build', '--prod');
   await expectFileToExist(join(process.cwd(), 'dist'));
@@ -53,12 +53,12 @@ export default async function () {
   await expectFileToMatch(`dist/test-project/${mainES2015Path}`, bootstrapRegExp);
 
   // Size checks in bytes
-  if (ivyProject) {
-    verifySize(mainES5Path, 147789);
-    verifySize(mainES2015Path, 130153);
+  if (veProject) {
+    verifySize(mainES5Path, 184470);
+    verifySize(mainES2015Path, 163627);
   } else {
-    verifySize(mainES5Path, 155523);
-    verifySize(mainES2015Path, 135394);
+    verifySize(mainES5Path, 148031);
+    verifySize(mainES2015Path, 137494);
   }
 
   // Check that the process didn't change local files.

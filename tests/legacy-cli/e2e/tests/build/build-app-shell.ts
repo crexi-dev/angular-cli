@@ -6,13 +6,7 @@ import { updateJsonFile } from '../../utils/project';
 import { readNgVersion } from '../../utils/version';
 
 export default function() {
-  // Skip this test in Angular 2/4.
-  if (getGlobalVariable('argv').ng2 || getGlobalVariable('argv').ng4) {
-    return Promise.resolve();
-  }
-
   let platformServerVersion = readNgVersion();
-  let httpVersion = readNgVersion();
 
   if (getGlobalVariable('argv')['ng-snapshots']) {
     platformServerVersion = 'github:angular/platform-server-builds';
@@ -52,6 +46,12 @@ export default function() {
           "module": "commonjs",
           "types": []
         },
+        "files": [
+          "src/main.server.ts"
+        ],
+        "include": [
+          "src/**/*.d.ts"
+        ],
         "angularCompilerOptions": {
           "entryModule": "src/app/app.server.module#AppServerModule"
         }
@@ -72,6 +72,7 @@ export default function() {
       }
 
       export { AppServerModule } from './app/app.server.module';
+      export { renderModule, renderModuleFactory } from '@angular/platform-server';
     `,
       ),
     )

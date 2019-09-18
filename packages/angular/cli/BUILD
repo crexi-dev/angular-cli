@@ -41,6 +41,7 @@ ts_library(
         "@npm//@types/semver",
         "@npm//@types/universal-analytics",
         "@npm//@types/uuid",
+        "@npm//ansi-colors",
         "@npm//rxjs",
     ],
 )
@@ -53,6 +54,7 @@ ts_library(
         ":analytics_schema",
         ":build_schema",
         ":config_schema",
+        ":deploy_schema",
         ":deprecated_schema",
         ":doc_schema",
         ":e2e_schema",
@@ -89,6 +91,14 @@ ts_json_schema(
 ts_json_schema(
     name = "build_schema",
     src = "commands/build.json",
+    data = [
+        "commands/definitions.json",
+    ],
+)
+
+ts_json_schema(
+    name = "deploy_schema",
+    src = "commands/deploy.json",
     data = [
         "commands/definitions.json",
     ],

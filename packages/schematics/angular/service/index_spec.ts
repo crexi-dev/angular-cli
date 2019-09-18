@@ -10,7 +10,6 @@ import { Schema as ApplicationOptions } from '../application/schema';
 import { Schema as WorkspaceOptions } from '../workspace/schema';
 import { Schema as ServiceOptions } from './schema';
 
-// tslint:disable:max-line-length
 describe('Service Schematic', () => {
   const schematicRunner = new SchematicTestRunner(
     '@schematics/angular',
@@ -37,7 +36,7 @@ describe('Service Schematic', () => {
   };
   let appTree: UnitTestTree;
   beforeEach(async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync('application', appOptions, appTree).toPromise();
   });
 

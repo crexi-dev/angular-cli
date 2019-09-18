@@ -20,9 +20,10 @@ import {
   getStatsConfig,
   getStylesConfig,
 } from '../angular-cli-files/models/webpack-configs';
+import { readTsconfig } from '../angular-cli-files/utilities/read-tsconfig';
 import { statsErrorsToString, statsWarningsToString } from '../angular-cli-files/utilities/stats';
 import { Schema as BrowserBuilderOptions } from '../browser/schema';
-import { Version } from '../utils/version';
+import { assertCompatibleAngularVersion } from '../utils/version';
 import { generateBrowserWebpackConfigFromContext } from '../utils/webpack-browser-config';
 import { Schema as ExtractI18nBuilderOptions } from './schema';
 
@@ -50,13 +51,22 @@ class InMemoryOutputPlugin {
 
 async function execute(options: ExtractI18nBuilderOptions, context: BuilderContext) {
   // Check Angular version.
-  Version.assertCompatibleAngularVersion(context.workspaceRoot);
+  assertCompatibleAngularVersion(context.workspaceRoot, context.logger);
 
   const browserTarget = targetFromTargetString(options.browserTarget);
   const browserOptions = await context.validateOptions<JsonObject & BrowserBuilderOptions>(
     await context.getTargetOptions(browserTarget),
     await context.getBuilderNameForTarget(browserTarget),
   );
+
+  // FIXME: i18n is not yet implemented in Ivy
+  // We should display a warning and exit gracefully.
+  const { options: compilerOptions } = readTsconfig(browserOptions.tsConfig, context.workspaceRoot);
+  if (compilerOptions.enableIvy) {
+    context.logger.warn('We are sorry but i18n is not yet implemented in Ivy.');
+
+    return { success: true };
+  }
 
   // We need to determine the outFile name so that AngularCompiler can retrieve it.
   let outFile = options.outFile || getI18nOutfile(options.i18nFormat);

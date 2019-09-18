@@ -36,7 +36,7 @@ describe('Guard Schematic', () => {
   };
   let appTree: UnitTestTree;
   beforeEach(async () => {
-    appTree = schematicRunner.runSchematic('workspace', workspaceOptions);
+    appTree = await schematicRunner.runSchematicAsync('workspace', workspaceOptions).toPromise();
     appTree = await schematicRunner.runSchematicAsync('application', appOptions, appTree)
       .toPromise();
   });
@@ -104,5 +104,18 @@ describe('Guard Schematic', () => {
       const functionName = `${implementation.charAt(0).toLowerCase()}${implementation.slice(1)}`;
       expect(fileString).toContain(functionName);
     });
+  });
+
+  it('should use CanActivate if no implements value', async () => {
+    const options = { ...defaultOptions, implements: undefined };
+    const tree = await schematicRunner.runSchematicAsync('guard', options, appTree)
+      .toPromise();
+    const fileString = tree.readContent('/projects/bar/src/app/foo.guard.ts');
+    expect(fileString).toContain('CanActivate');
+    expect(fileString).toContain('canActivate');
+    expect(fileString).not.toContain('CanActivateChild');
+    expect(fileString).not.toContain('canActivateChild');
+    expect(fileString).not.toContain('CanLoad');
+    expect(fileString).not.toContain('canLoad');
   });
 });

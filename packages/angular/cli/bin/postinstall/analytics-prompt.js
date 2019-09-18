@@ -6,9 +6,14 @@ if ('NG_CLI_ANALYTICS' in process.env) {
 }
 
 try {
-  const analytics = require('../../models/analytics');
+  var analytics = require('../../models/analytics');
 
-  if (!analytics.hasGlobalAnalyticsConfiguration()) {
-    analytics.promptGlobalAnalytics();
-  }
+  analytics
+    .hasGlobalAnalyticsConfiguration()
+    .then(hasGlobalConfig => {
+      if (!hasGlobalConfig) {
+        return analytics.promptGlobalAnalytics();
+      }
+    })
+    .catch(() => {});
 } catch (_) {}

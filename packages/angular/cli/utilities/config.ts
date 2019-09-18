@@ -55,9 +55,9 @@ function globalFilePath(): string | null {
 
 const cachedWorkspaces = new Map<string, experimental.workspace.Workspace | null>();
 
-export function getWorkspace(
+export async function getWorkspace(
   level: 'local' | 'global' = 'local',
-): experimental.workspace.Workspace | null {
+): Promise<experimental.workspace.Workspace | null> {
   const cached = cachedWorkspaces.get(level);
   if (cached != undefined) {
     return cached;
@@ -78,7 +78,15 @@ export function getWorkspace(
     new NodeJsSyncHost(),
   );
 
-  workspace.loadWorkspaceFromHost(file).subscribe();
+  try {
+    await workspace.loadWorkspaceFromHost(file).toPromise();
+  } catch (error) {
+    throw new Error(
+      `Workspace config file cannot be loaded: ${configPath}`
+      + `\n${error instanceof Error ? error.message : error}`,
+    );
+  }
+
   cachedWorkspaces.set(level, workspace);
 
   return workspace;
@@ -116,26 +124,19 @@ export function getWorkspaceRaw(
   const ast = parseJsonAst(content, JsonParseMode.Loose);
 
   if (ast.kind != 'object') {
-    throw new Error('Invalid JSON');
+    throw new Error(`Invalid JSON file: ${configPath}`);
   }
 
   return [ast, configPath];
 }
 
-export function validateWorkspace(json: JsonObject) {
+export async function validateWorkspace(json: JsonObject) {
   const workspace = new experimental.workspace.Workspace(
     normalize('.'),
     new NodeJsSyncHost(),
   );
 
-  let error;
-  workspace.loadWorkspaceFromJson(json).subscribe({
-    error: e => error = e,
-  });
-
-  if (error) {
-    throw error;
-  }
+  await workspace.loadWorkspaceFromJson(json).toPromise();
 
   return true;
 }
@@ -151,8 +152,8 @@ export function getProjectByCwd(workspace: experimental.workspace.Workspace): st
   }
 }
 
-export function getConfiguredPackageManager(): string | null {
-  let workspace = getWorkspace('local');
+export async function getConfiguredPackageManager(): Promise<string | null> {
+  let workspace = await getWorkspace('local');
 
   if (workspace) {
     const project = getProjectByCwd(workspace);
@@ -170,7 +171,7 @@ export function getConfiguredPackageManager(): string | null {
     }
   }
 
-  workspace = getWorkspace('global');
+  workspace = await getWorkspace('global');
   if (workspace && workspace.getCli()) {
     const value = workspace.getCli()['packageManager'];
     if (typeof value == 'string') {
@@ -262,15 +263,15 @@ function getLegacyPackageManager(): string | null {
   return null;
 }
 
-export function getSchematicDefaults(
+export async function getSchematicDefaults(
   collection: string,
   schematic: string,
   project?: string | null,
-): {} {
+): Promise<{}> {
   let result = {};
   const fullName = `${collection}:${schematic}`;
 
-  let workspace = getWorkspace('global');
+  let workspace = await getWorkspace('global');
   if (workspace && workspace.getSchematics()) {
     const schematicObject = workspace.getSchematics()[fullName];
     if (schematicObject) {
@@ -283,7 +284,7 @@ export function getSchematicDefaults(
 
   }
 
-  workspace = getWorkspace('local');
+  workspace = await getWorkspace('local');
 
   if (workspace) {
     if (workspace.getSchematics()) {
@@ -313,8 +314,8 @@ export function getSchematicDefaults(
   return result;
 }
 
-export function isWarningEnabled(warning: string): boolean {
-  let workspace = getWorkspace('local');
+export async function isWarningEnabled(warning: string): Promise<boolean> {
+  let workspace = await getWorkspace('local');
 
   if (workspace) {
     const project = getProjectByCwd(workspace);
@@ -338,7 +339,7 @@ export function isWarningEnabled(warning: string): boolean {
     }
   }
 
-  workspace = getWorkspace('global');
+  workspace = await getWorkspace('global');
   if (workspace && workspace.getCli()) {
     const warnings = workspace.getCli()['warnings'];
     if (typeof warnings == 'object' && !Array.isArray(warnings)) {

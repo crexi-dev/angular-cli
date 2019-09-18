@@ -9,18 +9,21 @@ import { Architect } from '@angular-devkit/architect';
 import { WorkspaceNodeModulesArchitectHost } from '@angular-devkit/architect/node';
 import { TestProjectHost, TestingArchitectHost } from '@angular-devkit/architect/testing';
 import {
-  experimental,
+  getSystemPath,
   join,
   normalize,
   schema,
   virtualFs,
+  workspaces,
 } from '@angular-devkit/core'; // tslint:disable-line:no-implicit-dependencies
 import { map, take, tap } from 'rxjs/operators';
+
+const veEnabled = process.argv.includes('--ve');
 
 const devkitRoot = (global as unknown as { _DevKitRoot: string})._DevKitRoot;
 const workspaceRoot = join(
   normalize(devkitRoot),
-  'tests/angular_devkit/build_ng_packagr/ng-packaged/',
+  `tests/angular_devkit/build_ng_packagr/ng-packaged${veEnabled ? '-ve' : ''}/`,
 );
 
 describe('NgPackagr Builder', () => {
@@ -33,12 +36,17 @@ describe('NgPackagr Builder', () => {
     const registry = new schema.CoreSchemaRegistry();
     registry.addPostTransform(schema.transforms.addUndefinedDefaults);
 
-    const workspace = await experimental.workspace.Workspace.fromPath(host, host.root(), registry);
-    const architectHost = new TestingArchitectHost(
-      host.root(),
-      host.root(),
-      new WorkspaceNodeModulesArchitectHost(workspace, host.root()),
+    const workspaceSysPath = getSystemPath(host.root());
+    const { workspace } = await workspaces.readWorkspace(
+      workspaceSysPath,
+      workspaces.createWorkspaceHost(host),
     );
+    const architectHost = new TestingArchitectHost(
+      workspaceSysPath,
+      workspaceSysPath,
+      new WorkspaceNodeModulesArchitectHost(workspace, workspaceSysPath),
+    );
+
     architect = new Architect(architectHost, registry);
   });
 
@@ -56,6 +64,12 @@ describe('NgPackagr Builder', () => {
       host.scopedSync().read(normalize('./dist/lib/fesm5/lib.js')),
     );
     expect(content).toContain('lib works');
+
+    if (veEnabled) {
+      expect(content).not.toContain('ngComponentDef');
+    } else {
+      expect(content).toContain('ngComponentDef');
+    }
   });
 
   it('rebuilds on TS file changes', async () => {

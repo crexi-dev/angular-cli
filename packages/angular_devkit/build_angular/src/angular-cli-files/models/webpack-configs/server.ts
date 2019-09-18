@@ -6,7 +6,7 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import { isAbsolute } from 'path';
-import { Configuration } from 'webpack';
+import { Configuration, ContextReplacementPlugin } from 'webpack';
 import { WebpackConfigOptions } from '../build-options';
 import { getSourceMapDevTool } from './utils';
 
@@ -14,7 +14,7 @@ import { getSourceMapDevTool } from './utils';
  * Returns a partial specific to creating a bundle for node
  * @param wco Options which are include the build options and app config
  */
-export function getServerConfig(wco: WebpackConfigOptions) {
+export function getServerConfig(wco: WebpackConfigOptions): Configuration {
   const extraPlugins = [];
   if (wco.buildOptions.sourceMap) {
     const { scripts, styles, hidden } = wco.buildOptions.sourceMap;
@@ -30,7 +30,12 @@ export function getServerConfig(wco: WebpackConfigOptions) {
     output: {
       libraryTarget: 'commonjs',
     },
-    plugins: extraPlugins,
+    plugins: [
+      // Fixes Critical dependency: the request of a dependency is an expression
+      new ContextReplacementPlugin(/@?hapi(\\|\/)/),
+      new ContextReplacementPlugin(/express(\\|\/)/),
+      ...extraPlugins,
+    ],
     node: false,
   };
 

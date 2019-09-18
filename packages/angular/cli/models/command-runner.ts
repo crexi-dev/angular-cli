@@ -19,7 +19,13 @@ import * as debug from 'debug';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { parseJsonSchemaToCommandDescription } from '../utilities/json-schema';
-import { UniversalAnalytics, getGlobalAnalytics, getSharedAnalytics } from './analytics';
+import {
+  getGlobalAnalytics,
+  getSharedAnalytics,
+  getWorkspaceAnalytics,
+  hasWorkspaceAnalyticsConfiguration,
+  promptProjectAnalytics,
+} from './analytics';
 import { Command } from './command';
 import { CommandDescription, CommandWorkspace } from './interface';
 import * as parser from './parser';
@@ -31,6 +37,7 @@ const standardCommands = {
   'add': '../commands/add.json',
   'analytics': '../commands/analytics.json',
   'build': '../commands/build.json',
+  'deploy': '../commands/deploy.json',
   'config': '../commands/config.json',
   'doc': '../commands/doc.json',
   'e2e': '../commands/e2e.json',
@@ -57,9 +64,20 @@ export interface CommandMapOptions {
  * Create the analytics instance.
  * @private
  */
-async function _createAnalytics(): Promise<analytics.Analytics> {
-  const config = getGlobalAnalytics();
-  const maybeSharedAnalytics = getSharedAnalytics();
+async function _createAnalytics(workspace: boolean): Promise<analytics.Analytics> {
+  let config = await getGlobalAnalytics();
+  // If in workspace and global analytics is enabled, defer to workspace level
+  if (workspace && config) {
+    // TODO: This should honor the `no-interactive` option.
+    //       It is currently not an `ng` option but rather only an option for specific commands.
+    //       The concept of `ng`-wide options are needed to cleanly handle this.
+    if (!(await hasWorkspaceAnalyticsConfiguration())) {
+      await promptProjectAnalytics();
+    }
+    config = await getWorkspaceAnalytics();
+  }
+
+  const maybeSharedAnalytics = await getSharedAnalytics();
 
   if (config && maybeSharedAnalytics) {
     return new analytics.MultiAnalytics([config, maybeSharedAnalytics]);
@@ -213,7 +231,7 @@ export async function runCommand(
       return map;
     });
 
-    const analytics = options.analytics || await _createAnalytics();
+    const analytics = options.analytics || await _createAnalytics(!!workspace.configFile);
     const context = { workspace, analytics };
     const command = new description.impl(context, description, logger);
 
