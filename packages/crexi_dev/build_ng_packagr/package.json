@@ -1,6 +1,6 @@
 {
   "name": "@crexi-dev/build-ng-packagr",
-  "version": "8.0.0",
+  "version": "8.2.0",
   "description": "Angular Build Architect for ng-packagr",
   "experimental": true,
   "main": "src/index.js",

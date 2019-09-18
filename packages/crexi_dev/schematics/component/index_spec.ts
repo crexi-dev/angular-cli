@@ -59,8 +59,8 @@ describe('Component Schematic', () => {
     const files = tree.files;
     expect(files).toEqual(
       jasmine.arrayContaining([
-        '/projects/bar/src/app/foo/foo.component.css',
-        '/projects/bar/src/app/foo/foo.component.html',
+        '/projects/bar/src/app/foo/foo.css',
+        '/projects/bar/src/app/foo/foo.pug',
         '/projects/bar/src/app/foo/foo.component.spec.ts',
         '/projects/bar/src/app/foo/foo.component.ts',
       ]),
@@ -109,8 +109,8 @@ describe('Component Schematic', () => {
     const files = tree.files;
     expect(files).toEqual(
       jasmine.arrayContaining([
-        '/projects/bar/src/app/foo.component.css',
-        '/projects/bar/src/app/foo.component.html',
+        '/projects/bar/src/app/foo.css',
+        '/projects/bar/src/app/foo.pug',
         '/projects/bar/src/app/foo.component.spec.ts',
         '/projects/bar/src/app/foo.component.ts',
       ]),
@@ -180,9 +180,9 @@ describe('Component Schematic', () => {
 
     const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
     let files = tree.files;
-    let root = `/${pathOption}/foo/foo.component`;
+    let root = `/${pathOption}/foo/foo`;
     expect(files).toEqual(
-      jasmine.arrayContaining([`${root}.css`, `${root}.html`, `${root}.spec.ts`, `${root}.ts`]),
+      jasmine.arrayContaining([`${root}.css`, `${root}.pug`, `${root}.component.spec.ts`, `${root}.component.ts`]),
     );
 
     const options2 = { ...options, name: 'BAR' };
@@ -199,9 +199,9 @@ describe('Component Schematic', () => {
 
     const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
     const files = tree.files;
-    const root = `/${options.path}/foo/foo.component`;
+    const root = `/${options.path}/foo/foo`;
     expect(files).toEqual(
-      jasmine.arrayContaining([`${root}.css`, `${root}.html`, `${root}.spec.ts`, `${root}.ts`]),
+      jasmine.arrayContaining([`${root}.css`, `${root}.html`, `${root}.component.spec.ts`, `${root}.component.ts`]),
     );
   });
 
@@ -235,7 +235,7 @@ describe('Component Schematic', () => {
     const content = tree.readContent('/projects/bar/src/app/foo/foo.component.ts');
     expect(content).toMatch(/template: /);
     expect(content).not.toMatch(/templateUrl: /);
-    expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.component.html');
+    expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.pug');
   });
 
   it('should respect the inlineStyle option', async () => {
@@ -244,16 +244,16 @@ describe('Component Schematic', () => {
     const content = tree.readContent('/projects/bar/src/app/foo/foo.component.ts');
     expect(content).toMatch(/styles: \[/);
     expect(content).not.toMatch(/styleUrls: /);
-    expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.component.css');
+    expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.css');
   });
 
   it('should respect the style option', async () => {
     const options = { ...defaultOptions, style: Style.Sass };
     const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
     const content = tree.readContent('/projects/bar/src/app/foo/foo.component.ts');
-    expect(content).toMatch(/styleUrls: \['.\/foo.component.sass/);
-    expect(tree.files).toContain('/projects/bar/src/app/foo/foo.component.sass');
-    expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.component.css');
+    expect(content).toMatch(/styleUrls: \['.\/foo.sass/);
+    expect(tree.files).toContain('/projects/bar/src/app/foo/foo.sass');
+    expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.css');
   });
 
   it('should use the module flag even if the module is a routing module', async () => {
@@ -327,14 +327,14 @@ describe('Component Schematic', () => {
     const options = { ...defaultOptions, style: undefined, styleext: 'scss' };
     const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
     const files = tree.files;
-    expect(files).toContain('/projects/bar/src/app/foo/foo.component.scss');
+    expect(files).toContain('/projects/bar/src/app/foo/foo.scss');
   });
 
   it('should respect the deprecated styleext (css) option', async () => {
     const options = { ...defaultOptions, style: undefined, styleext: 'css' };
     const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
     const files = tree.files;
-    expect(files).toContain('/projects/bar/src/app/foo/foo.component.css');
+    expect(files).toContain('/projects/bar/src/app/foo/foo.css');
   });
 
   it('should respect the deprecated spec option when false', async () => {

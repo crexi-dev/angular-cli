@@ -153,7 +153,7 @@ export default function (options: ComponentOptions): Rule {
     const templateSource = apply(url('./files'), [
       options.skipTests ? filter(path => !path.endsWith('.spec.ts.template')) : noop(),
       options.inlineStyle ? filter(path => !path.endsWith('.__style__.template')) : noop(),
-      options.inlineTemplate ? filter(path => !path.endsWith('.html.template')) : noop(),
+      options.inlineTemplate ? filter(path => !path.endsWith('.pug.template')) : noop(),
       applyTemplates({
         ...strings,
         'if-flat': (s: string) => options.flat ? '' : s,

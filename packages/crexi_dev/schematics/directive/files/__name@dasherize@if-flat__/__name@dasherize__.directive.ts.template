@@ -1,10 +1,14 @@
 import { Directive } from '@angular/core';
 
 @Directive({
-  selector: '[<%= selector %>]'
+    selector: '[<%= selector %>]'
 })
 export class <%= classify(name) %>Directive {
 
-  constructor() { }
+    constructor () {
+
+        // constructor
+
+    }
 
 }
