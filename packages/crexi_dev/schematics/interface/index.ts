@@ -11,29 +11,23 @@ import {
   SchematicsException,
   Tree,
   apply,
-  branchAndMerge,
+  applyTemplates,
   chain,
   mergeWith,
   move,
   noop,
-  template,
   url,
 } from '@angular-devkit/schematics';
 import { applyLintFix } from '../utility/lint-fix';
 import { parseName } from '../utility/parse-name';
-import { buildDefaultPath, getProject } from '../utility/project';
+import { createDefaultPath } from '../utility/workspace';
 import { Schema as InterfaceOptions } from './schema';
 
 
 export default function (options: InterfaceOptions): Rule {
-  return (host: Tree) => {
-    if (!options.project) {
-      throw new SchematicsException('Option (project) is required.');
-    }
-    const project = getProject(host, options.project);
-
+  return async (host: Tree) => {
     if (options.path === undefined) {
-      options.path = buildDefaultPath(project);
+      options.path = await createDefaultPath(host, options.project as string);
     }
 
     const parsedPath = parseName(options.path, options.name);
@@ -44,7 +38,7 @@ export default function (options: InterfaceOptions): Rule {
     options.type = !!options.type ? `.${options.type}` : '';
 
     const templateSource = apply(url('./files'), [
-      template({
+      applyTemplates({
         ...strings,
         ...options,
       }),
@@ -52,9 +46,7 @@ export default function (options: InterfaceOptions): Rule {
     ]);
 
     return chain([
-      branchAndMerge(chain([
-        mergeWith(templateSource),
-      ])),
+      mergeWith(templateSource),
       options.lintFix ? applyLintFix(options.path) : noop(),
     ]);
   };

@@ -46,7 +46,6 @@ export default function (options: NgNewOptions): Rule {
   const applicationOptions: ApplicationOptions = {
     projectRoot: '',
     name: options.name,
-    experimentalIvy: options.experimentalIvy,
     inlineStyle: options.inlineStyle,
     inlineTemplate: options.inlineTemplate,
     prefix: options.prefix,
@@ -65,7 +64,7 @@ export default function (options: NgNewOptions): Rule {
       apply(empty(), [
         schematic('workspace', workspaceOptions),
         options.createApplication ? schematic('application', applicationOptions) : noop,
-        move(options.directory || options.name),
+        move(options.directory),
       ]),
     ),
     (_host: Tree, context: SchematicContext) => {
