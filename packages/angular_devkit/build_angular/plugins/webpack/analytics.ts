@@ -95,7 +95,9 @@ export class NgBuildAnalyticsPlugin {
     protected _projectRoot: string,
     protected _analytics: analytics.Analytics,
     protected _category: string,
-  ) {}
+    private _isIvy: boolean,
+  ) {
+  }
 
   protected _reset() {
     this._stats = new AnalyticsBuildStats();
@@ -121,12 +123,14 @@ export class NgBuildAnalyticsPlugin {
     return metrics;
   }
   protected _getDimensions(stats: Stats) {
-    const dimensions: (string | number)[] = [];
+    const dimensions: (string | number | boolean)[] = [];
 
     if (this._stats.errors.length) {
       // Adding commas before and after so the regex are easier to define filters.
       dimensions[analytics.NgCliAnalyticsDimensions.BuildErrors] = `,${this._stats.errors.join()},`;
     }
+
+    dimensions[analytics.NgCliAnalyticsDimensions.NgIvyEnabled] = this._isIvy;
 
     return dimensions;
   }
@@ -154,9 +158,9 @@ export class NgBuildAnalyticsPlugin {
 
       // Count the number of `Component({` strings (case sensitive), which happens in __decorate().
       // This does not include View Engine AOT compilation, we use the ngfactory for it.
-      this._stats.numberOfComponents += countOccurrences(module._source.source(), ' Component({');
-      // For Ivy we just count ngComponentDef.
-      this._stats.numberOfComponents += countOccurrences(module._source.source(), 'ngComponentDef', true);
+      this._stats.numberOfComponents += countOccurrences(module._source.source(), 'Component({');
+      // For Ivy we just count ɵcmp.
+      this._stats.numberOfComponents += countOccurrences(module._source.source(), '.ɵcmp', true);
     }
   }
 

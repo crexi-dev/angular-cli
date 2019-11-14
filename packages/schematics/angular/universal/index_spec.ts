@@ -7,6 +7,7 @@
  */
 import { SchematicTestRunner, UnitTestTree } from '@angular-devkit/schematics/testing';
 import { Schema as ApplicationOptions, Style } from '../application/schema';
+import { NodeDependencyType, addPackageJsonDependency } from '../utility/dependencies';
 import { Schema as WorkspaceOptions } from '../workspace/schema';
 import { Schema as UniversalOptions } from './schema';
 
@@ -148,16 +149,27 @@ describe('Universal Schematic', () => {
     expect(targets.server).toBeDefined();
     expect(targets.server.builder).toBeDefined();
     const opts = targets.server.options;
-    expect(opts.outputPath).toEqual('dist/bar-server');
+    expect(opts.outputPath).toEqual('dist/bar/server');
     expect(opts.main).toEqual('projects/bar/src/main.server.ts');
     expect(opts.tsConfig).toEqual('projects/bar/tsconfig.server.json');
     const configurations = targets.server.configurations;
     expect(configurations.production).toBeDefined();
     expect(configurations.production.fileReplacements).toBeDefined();
+    expect(configurations.production.outputHashing).toBe('media');
     const fileReplacements = targets.server.configurations.production.fileReplacements;
     expect(fileReplacements.length).toEqual(1);
     expect(fileReplacements[0].replace).toEqual('projects/bar/src/environments/environment.ts');
     expect(fileReplacements[0].with).toEqual('projects/bar/src/environments/environment.prod.ts');
+  });
+
+  it('should update workspace with a build target outputPath', async () => {
+    const tree = await schematicRunner.runSchematicAsync('universal', defaultOptions, appTree)
+      .toPromise();
+    const filePath = '/angular.json';
+    const contents = tree.readContent(filePath);
+    const config = JSON.parse(contents.toString());
+    const targets = config.projects.bar.architect;
+    expect(targets.build.options.outputPath).toEqual('dist/bar/browser');
   });
 
   it('should add a server transition to BrowerModule import', async () => {
@@ -227,4 +239,25 @@ describe('Universal Schematic', () => {
     expect(tree.exists(filePath)).toEqual(true);
   });
 
+  it(`should not add import to '@angular/localize' in main file when it's not a depedency`, async () => {
+    const tree = await schematicRunner.runSchematicAsync('universal', defaultOptions, appTree)
+      .toPromise();
+    const filePath = '/projects/bar/src/main.server.ts';
+    const contents = tree.readContent(filePath);
+    expect(contents).not.toContain('@angular/localize');
+  });
+
+  it(`should add import to '@angular/localize' in main file when it's a depedency`, async () => {
+    addPackageJsonDependency(appTree, {
+       name: '@angular/localize',
+       type: NodeDependencyType.Default,
+       version: 'latest',
+    });
+
+    const tree = await schematicRunner.runSchematicAsync('universal', defaultOptions, appTree)
+      .toPromise();
+    const filePath = '/projects/bar/src/main.server.ts';
+    const contents = tree.readContent(filePath);
+    expect(contents).toContain('@angular/localize/init');
+  });
 });

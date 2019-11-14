@@ -24,6 +24,7 @@ describe('Component Schematic', () => {
     inlineTemplate: false,
     changeDetection: ChangeDetection.Default,
     style: Style.Css,
+    type: 'Component',
     skipTests: false,
     module: undefined,
     export: false,
@@ -256,6 +257,17 @@ describe('Component Schematic', () => {
     expect(tree.files).not.toContain('/projects/bar/src/app/foo/foo.component.css');
   });
 
+  it('should respect the type option', async () => {
+    const options = { ...defaultOptions, type: 'Route' };
+    const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
+    const content = tree.readContent('/projects/bar/src/app/foo/foo.route.ts');
+    const testContent = tree.readContent('/projects/bar/src/app/foo/foo.route.spec.ts');
+    expect(content).toContain('export class FooRoute implements OnInit');
+    expect(testContent).toContain('describe(\'FooRoute\'');
+    expect(tree.files).toContain('/projects/bar/src/app/foo/foo.route.css');
+    expect(tree.files).toContain('/projects/bar/src/app/foo/foo.route.html');
+  });
+
   it('should use the module flag even if the module is a routing module', async () => {
     const routingFileName = 'app-routing.module.ts';
     const routingModulePath = `/projects/bar/src/app/${routingFileName}`;
@@ -320,34 +332,5 @@ describe('Component Schematic', () => {
       .runSchematicAsync('component', defaultOptions, appTree)
       .toPromise();
     expect(appTree.files).toContain('/projects/bar/custom/app/foo/foo.component.ts');
-  });
-
-  // testing deprecating options don't cause conflicts
-  it('should respect the deprecated styleext (scss) option', async () => {
-    const options = { ...defaultOptions, style: undefined, styleext: 'scss' };
-    const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
-    const files = tree.files;
-    expect(files).toContain('/projects/bar/src/app/foo/foo.component.scss');
-  });
-
-  it('should respect the deprecated styleext (css) option', async () => {
-    const options = { ...defaultOptions, style: undefined, styleext: 'css' };
-    const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
-    const files = tree.files;
-    expect(files).toContain('/projects/bar/src/app/foo/foo.component.css');
-  });
-
-  it('should respect the deprecated spec option when false', async () => {
-    const options = { ...defaultOptions, skipTests: undefined, spec: false };
-    const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
-    const files = tree.files;
-    expect(files).not.toContain('/projects/bar/src/app/foo/foo.component.spec.ts');
-  });
-
-  it('should respect the deprecated spec option when true', async () => {
-    const options = { ...defaultOptions, skipTests: false, spec: true };
-    const tree = await schematicRunner.runSchematicAsync('component', options, appTree).toPromise();
-    const files = tree.files;
-    expect(files).toContain('/projects/bar/src/app/foo/foo.component.spec.ts');
   });
 });

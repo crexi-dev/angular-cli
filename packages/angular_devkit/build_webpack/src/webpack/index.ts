@@ -10,11 +10,8 @@ import { getSystemPath, json, normalize, resolve } from '@angular-devkit/core';
 import { Observable, from, of } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
 import * as webpack from 'webpack';
-import { ArchitectPlugin } from '../plugins/architect';
 import { EmittedFiles, getEmittedFiles } from '../utils';
 import { Schema as RealWebpackBuilderSchema } from './schema';
-
-const webpackMerge = require('webpack-merge');
 
 export type WebpackBuilderSchema = json.JsonObject & RealWebpackBuilderSchema;
 
@@ -27,6 +24,7 @@ export interface WebpackFactory {
 
 export type BuildResult = BuilderOutput & {
   emittedFiles?: EmittedFiles[];
+  webpackStats?: webpack.Stats.ToJsonOutput;
 };
 
 export function runWebpack(
@@ -41,12 +39,6 @@ export function runWebpack(
   const log: WebpackLoggingCallback = options.logging
     || ((stats, config) => context.logger.info(stats.toString(config.stats)));
 
-  config = webpackMerge(config, {
-    plugins: [
-      new ArchitectPlugin(context),
-    ],
-  });
-
   return createWebpack(config).pipe(
     switchMap(webpackCompiler => new Observable<BuildResult>(obs => {
       const callback: webpack.Compiler.Handler = (err, stats) => {
@@ -59,6 +51,7 @@ export function runWebpack(
 
         obs.next({
           success: !stats.hasErrors(),
+          webpackStats: stats.toJson(),
           emittedFiles: getEmittedFiles(stats.compilation),
         } as unknown as BuildResult);
 

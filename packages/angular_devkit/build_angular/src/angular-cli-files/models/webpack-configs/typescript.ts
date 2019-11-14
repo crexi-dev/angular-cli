@@ -15,7 +15,6 @@ import {
   NgToolsLoader,
   PLATFORM
 } from '@ngtools/webpack';
-import { fullDifferential } from '../../../utils';
 import { WebpackConfigOptions, BuildOptions } from '../build-options';
 
 function _pluginOptionsOverrides(
@@ -31,10 +30,6 @@ function _pluginOptionsOverrides(
     for (const replacement of buildOptions.fileReplacements) {
       hostReplacementPaths[replacement.replace] = replacement.with;
     }
-  }
-
-  if (fullDifferential && buildOptions.scriptTargetOverride) {
-    compilerOptions.target = buildOptions.scriptTargetOverride;
   }
 
   if (buildOptions.preserveSymlinks) {
@@ -68,6 +63,12 @@ function _createAotPlugin(
       i18nInFormat: buildOptions.i18nFormat,
     };
 
+  const compilerOptions = options.compilerOptions || {};
+  if (i18nExtract) {
+    // Extraction of i18n is still using the legacy VE pipeline
+    compilerOptions.enableIvy = false;
+  }
+
   const additionalLazyModules: { [module: string]: string } = {};
   if (buildOptions.lazyModules) {
     for (const lazyModule of buildOptions.lazyModules) {
@@ -92,6 +93,7 @@ function _createAotPlugin(
     logger: wco.logger,
     directTemplateLoading: true,
     ...options,
+    compilerOptions,
   };
 
   pluginOptions = _pluginOptionsOverrides(buildOptions, pluginOptions);

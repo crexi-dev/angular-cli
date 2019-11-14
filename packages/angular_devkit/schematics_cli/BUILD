@@ -4,9 +4,9 @@
 # found in the LICENSE file at https://angular.io/license
 package(default_visibility = ["//visibility:public"])
 
-load("@npm_bazel_typescript//:defs.bzl", "ts_library")
+load("@npm_bazel_typescript//:index.bzl", "ts_library")
 
-licenses(["notice"])  # MIT License
+licenses(["notice"])
 
 # @angular-devkit/schematics-cli
 
@@ -22,6 +22,8 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics-cli",
     module_root = "bin",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",

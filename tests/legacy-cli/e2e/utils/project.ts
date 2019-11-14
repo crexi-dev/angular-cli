@@ -39,6 +39,14 @@ export async function createProject(name: string, ...args: string[]) {
   await ng('new', name, '--skip-install', ...extraArgs, ...args);
   process.chdir(name);
 
+  if (fs.existsSync('tsconfig.json')) {
+    // Disable the TS version check to make TS updates easier.
+    // Only VE does it, but on Ivy the i18n extraction uses VE.
+    await updateJsonFile('tsconfig.json', config => {
+      config.angularCompilerOptions.disableTypeScriptVersionCheck = true;
+    });
+  }
+
   await prepareProjectForE2e(name);
 }
 
@@ -235,9 +243,11 @@ export function useCIDefaults(projectName = 'test-project') {
     }
   })
     .then(() => updateJsonFile('package.json', json => {
-      // Use matching versions of Chrome and Webdriver.
+      // Use matching versions of Chromium and ChromeDriver.
+      // https://github.com/GoogleChrome/puppeteer/releases
+      // http://chromedriver.chromium.org/downloads
       json['scripts']['webdriver-update'] = 'webdriver-manager update' +
-        ` --standalone false --gecko false --versions.chrome 2.45`; // Supports Chrome v70-72
+        ` --standalone false --gecko false --versions.chrome 79.0.3945.16`; // Supports Chrome 79
 
     }))
     .then(() => npm('run', 'webdriver-update'));
@@ -250,16 +260,18 @@ export function useCIChrome(projectDir: string) {
 
   return Promise.resolve()
     .then(() => updateJsonFile('package.json', json => {
-      // Use matching versions of Chrome and Webdriver.
-      json['devDependencies']['puppeteer'] = '1.11.0'; // Chromium 72.0.3618.0 (r609904)
+      // Use matching versions of Chromium (via puppeteer) and ChromeDriver.
+      // https://github.com/GoogleChrome/puppeteer/releases
+      // http://chromedriver.chromium.org/downloads
+      json['devDependencies']['puppeteer'] = '2.0.0'; // Chromium 79.0.3942.0 (r706915)
       json['devDependencies']['karma-chrome-launcher'] = '~2.2.0'; // Minimum for ChromeHeadless.
     }))
     // Use Pupeteer in protractor if a config is found on the project.
     .then(() => {
       if (fs.existsSync(protractorConf)) {
         return replaceInFile(protractorConf,
-          `'browserName': 'chrome'`,
-          `'browserName': 'chrome',
+          `browserName: 'chrome'`,
+          `browserName: 'chrome',
           chromeOptions: {
             args: ['--headless'],
             binary: require('puppeteer').executablePath()
@@ -275,11 +287,11 @@ export function useCIChrome(projectDir: string) {
           .then(() => replaceInFile(karmaConf,
             `browsers: ['Chrome']`,
             `browsers: ['Chrome'],
-          customLaunchers: {
-            ChromeHeadlessCI: {
-              base: 'ChromeHeadless',
+            customLaunchers: {
+              ChromeHeadlessCI: {
+                base: 'ChromeHeadless',
+              }
             }
-          }
         `));
       }
     });

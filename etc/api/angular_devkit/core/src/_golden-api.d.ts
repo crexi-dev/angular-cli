@@ -618,6 +618,7 @@ export declare enum NgCliAnalyticsDimensions {
     NodeVersion = 4,
     NgAddCollection = 6,
     NgBuildBuildEventLog = 7,
+    NgIvyEnabled = 8,
     BuildErrors = 20
 }
 
@@ -688,7 +689,7 @@ export declare function parseJsonPointer(pointer: JsonPointer): string[];
 export declare class PartiallyOrderedSet<T> implements Set<T> {
     readonly [Symbol.toStringTag]: 'Set';
     readonly size: number;
-    [Symbol.iterator](): IterableIterator<T>;
+    [Symbol.iterator](): Generator<T, void, unknown>;
     protected _checkCircularDependencies(item: T, deps: Set<T>): void;
     add(item: T, deps?: (Set<T> | T[])): this;
     clear(): void;
@@ -1250,12 +1251,18 @@ export declare class WorkspaceNotYetLoadedException extends BaseException {
 export interface WorkspaceProject {
     architect?: WorkspaceTool;
     cli?: WorkspaceTool;
+    i18n?: WorkspaceProjectI18n;
     prefix: string;
     projectType: "application" | "library";
     root: string;
     schematics?: WorkspaceTool;
     sourceRoot?: string;
     targets?: WorkspaceTool;
+}
+
+export interface WorkspaceProjectI18n {
+    locales: Record<string, string>;
+    sourceLocale?: string;
 }
 
 export interface WorkspaceSchema {

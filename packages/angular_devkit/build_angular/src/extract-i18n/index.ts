@@ -20,12 +20,12 @@ import {
   getStatsConfig,
   getStylesConfig,
 } from '../angular-cli-files/models/webpack-configs';
-import { readTsconfig } from '../angular-cli-files/utilities/read-tsconfig';
 import { statsErrorsToString, statsWarningsToString } from '../angular-cli-files/utilities/stats';
 import { Schema as BrowserBuilderOptions } from '../browser/schema';
+import { createI18nOptions } from '../utils/i18n-options';
 import { assertCompatibleAngularVersion } from '../utils/version';
 import { generateBrowserWebpackConfigFromContext } from '../utils/webpack-browser-config';
-import { Schema as ExtractI18nBuilderOptions } from './schema';
+import { Format, Schema as ExtractI18nBuilderOptions } from './schema';
 
 function getI18nOutfile(format: string | undefined) {
   switch (format) {
@@ -59,21 +59,37 @@ async function execute(options: ExtractI18nBuilderOptions, context: BuilderConte
     await context.getBuilderNameForTarget(browserTarget),
   );
 
-  // FIXME: i18n is not yet implemented in Ivy
-  // We should display a warning and exit gracefully.
-  const { options: compilerOptions } = readTsconfig(browserOptions.tsConfig, context.workspaceRoot);
-  if (compilerOptions.enableIvy) {
-    context.logger.warn('We are sorry but i18n is not yet implemented in Ivy.');
+  if (options.i18nFormat !== Format.Xlf) {
+    options.format = options.i18nFormat;
+  }
 
-    return { success: true };
+  switch (options.format) {
+    case Format.Xlf:
+    case Format.Xlif:
+    case Format.Xliff:
+      options.format = Format.Xlf;
+      break;
+    case Format.Xlf2:
+    case Format.Xliff2:
+      options.format = Format.Xlf2;
+      break;
   }
 
   // We need to determine the outFile name so that AngularCompiler can retrieve it.
-  let outFile = options.outFile || getI18nOutfile(options.i18nFormat);
+  let outFile = options.outFile || getI18nOutfile(options.format);
   if (options.outputPath) {
     // AngularCompilerPlugin doesn't support genDir so we have to adjust outFile instead.
     outFile = path.join(options.outputPath, outFile);
   }
+
+  const projectName = context.target && context.target.project;
+  if (!projectName) {
+    throw new Error('The builder requires a target.');
+  }
+  // target is verified in the above call
+  // tslint:disable-next-line: no-non-null-assertion
+  const metadata = await context.getProjectMetadata(context.target!);
+  const i18n = createI18nOptions(metadata);
 
   const { config } = await generateBrowserWebpackConfigFromContext(
     {
@@ -83,8 +99,8 @@ async function execute(options: ExtractI18nBuilderOptions, context: BuilderConte
         styles: false,
       },
       buildOptimizer: false,
-      i18nLocale: options.i18nLocale,
-      i18nFormat: options.i18nFormat,
+      i18nLocale: options.i18nLocale || i18n.sourceLocale,
+      i18nFormat: options.format,
       i18nFile: outFile,
       aot: true,
       progress: options.progress,
@@ -115,7 +131,7 @@ async function execute(options: ExtractI18nBuilderOptions, context: BuilderConte
     }
   };
 
-  return runWebpack(config[0], context, { logging }).toPromise();
+  return runWebpack(config, context, { logging }).toPromise();
 }
 
 export default createBuilder<JsonObject & ExtractI18nBuilderOptions>(execute);

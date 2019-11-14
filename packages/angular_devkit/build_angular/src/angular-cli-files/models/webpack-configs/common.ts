@@ -12,23 +12,27 @@ import {
 import { tags } from '@angular-devkit/core';
 import * as CopyWebpackPlugin from 'copy-webpack-plugin';
 import * as path from 'path';
+import { RollupOptions } from 'rollup';
 import { ScriptTarget } from 'typescript';
 import {
   Compiler,
   Configuration,
   ContextReplacementPlugin,
   HashedModuleIdsPlugin,
+  Rule,
   compilation,
   debug,
 } from 'webpack';
 import { RawSource } from 'webpack-sources';
 import { AssetPatternClass, ExtraEntryPoint } from '../../../browser/schema';
-import { BuildBrowserFeatures, fullDifferential } from '../../../utils';
-import { manglingDisabled } from '../../../utils/mangle-options';
+import { BuildBrowserFeatures } from '../../../utils';
+import { findCachePath } from '../../../utils/cache-path';
+import { cachingDisabled, manglingDisabled } from '../../../utils/environment-options';
 import { BundleBudgetPlugin } from '../../plugins/bundle-budget';
 import { CleanCssWebpackPlugin } from '../../plugins/cleancss-webpack-plugin';
 import { NamedLazyChunksPlugin } from '../../plugins/named-chunks-plugin';
 import { ScriptsWebpackPlugin } from '../../plugins/scripts-webpack-plugin';
+import { WebpackRollupLoader } from '../../plugins/webpack';
 import { findAllNodeModules, findUp } from '../../utilities/find-up';
 import { WebpackConfigOptions } from '../build-options';
 import { getEsVersionForFileName, getOutputHashFormat, normalizeExtraEntryPoints } from './utils';
@@ -37,8 +41,6 @@ const ProgressPlugin = require('webpack/lib/ProgressPlugin');
 const CircularDependencyPlugin = require('circular-dependency-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
 
-// tslint:disable-next-line:no-any
-const g: any = typeof global !== 'undefined' ? global : {};
 
 // tslint:disable-next-line:no-big-function
 export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
@@ -57,27 +59,70 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
 
   // tslint:disable-next-line:no-any
   const extraPlugins: any[] = [];
+  const extraRules: Rule[] = [];
   const entryPoints: { [key: string]: string[] } = {};
 
   const targetInFileName = getEsVersionForFileName(
-    fullDifferential ? buildOptions.scriptTargetOverride : tsConfig.options.target,
+    tsConfig.options.target,
     buildOptions.esVersionInFileName,
   );
 
   if (buildOptions.main) {
-    entryPoints['main'] = [path.resolve(root, buildOptions.main)];
+    const mainPath = path.resolve(root, buildOptions.main);
+    entryPoints['main'] = [mainPath];
+
+    if (buildOptions.experimentalRollupPass) {
+      // NOTE: the following are known problems with experimentalRollupPass
+      // - vendorChunk, commonChunk, namedChunks: these won't work, because by the time webpack
+      // sees the chunks, the context of where they came from is lost.
+      // - webWorkerTsConfig: workers must be imported via a root relative path (e.g.
+      // `app/search/search.worker`) instead of a relative path (`/search.worker`) because
+      // of the same reason as above.
+      // - loadChildren string syntax: doesn't work because rollup cannot follow the imports.
+
+      // Rollup options, except entry module, which is automatically inferred.
+      const rollupOptions: RollupOptions = {};
+
+      // Add rollup plugins/rules.
+      extraRules.push({
+        test: mainPath,
+        // Ensure rollup loader executes after other loaders.
+        enforce: 'post',
+        use: [{
+          loader: WebpackRollupLoader,
+          options: rollupOptions,
+        }],
+      });
+
+      // Rollup bundles will include the dynamic System.import that was inside Angular and webpack
+      // will emit warnings because it can't resolve it. We just ignore it.
+      // TODO: maybe use https://webpack.js.org/configuration/stats/#statswarningsfilter instead.
+
+      // Ignore all "Critical dependency: the request of a dependency is an expression" warnings.
+      extraPlugins.push(new ContextReplacementPlugin(/./));
+      // Ignore "System.import() is deprecated" warnings for the main file and js files.
+      // Might still get them if @angular/core gets split into a lazy module.
+      extraRules.push({
+        test: mainPath,
+        enforce: 'post',
+        parser: { system: true },
+      });
+      extraRules.push({
+        test: /\.js$/,
+        enforce: 'post',
+        parser: { system: true },
+      });
+    }
   }
 
-  let differentialLoadingNeeded = false;
+  const differentialLoadingMode = !!wco.differentialLoadingMode;
   if (wco.buildOptions.platform !== 'server') {
-    const buildBrowserFeatures = new BuildBrowserFeatures(
-      projectRoot,
-      tsConfig.options.target || ScriptTarget.ES5,
-    );
+    if (differentialLoadingMode || tsConfig.options.target === ScriptTarget.ES5) {
+      const buildBrowserFeatures = new BuildBrowserFeatures(
+        projectRoot,
+        tsConfig.options.target || ScriptTarget.ES5,
+      );
 
-    differentialLoadingNeeded = buildBrowserFeatures.isDifferentialLoadingNeeded();
-
-    if ((buildOptions.scriptTargetOverride || tsConfig.options.target) === ScriptTarget.ES5) {
       if (
         buildOptions.es5BrowserSupport ||
         (buildOptions.es5BrowserSupport === undefined && buildBrowserFeatures.isEs5SupportNeeded())
@@ -95,26 +140,21 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
             : [noModuleScript];
         }
 
-        // For full build differential loading we don't need to generate a seperate polyfill file
-        // because they will be loaded exclusivly based on module and nomodule
-        const polyfillsChunkName =
-          fullDifferential && differentialLoadingNeeded ? 'polyfills' : 'polyfills-es5';
-
+        const polyfillsChunkName = 'polyfills-es5';
         entryPoints[polyfillsChunkName] = [path.join(__dirname, '..', 'es5-polyfills.js')];
-        if (!fullDifferential && differentialLoadingNeeded) {
+        if (differentialLoadingMode) {
           // Add zone.js legacy support to the es5 polyfills
           // This is a noop execution-wise if zone-evergreen is not used.
           entryPoints[polyfillsChunkName].push('zone.js/dist/zone-legacy');
         }
         if (!buildOptions.aot) {
-          // If not performing a full differential build the JIT polyfills need to be added to ES5
-          if (!fullDifferential && differentialLoadingNeeded) {
+          if (differentialLoadingMode) {
             entryPoints[polyfillsChunkName].push(path.join(__dirname, '..', 'jit-polyfills.js'));
           }
           entryPoints[polyfillsChunkName].push(path.join(__dirname, '..', 'es5-jit-polyfills.js'));
         }
         // If not performing a full differential build the polyfills need to be added to ES5 bundle
-        if (!fullDifferential && buildOptions.polyfills) {
+        if (buildOptions.polyfills) {
           entryPoints[polyfillsChunkName].push(path.resolve(root, buildOptions.polyfills));
         }
       }
@@ -194,7 +234,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
   }
 
   // process asset entries
-  if (buildOptions.assets) {
+  if (buildOptions.assets.length) {
     const copyWebpackPluginPatterns = buildOptions.assets.map((asset: AssetPatternClass) => {
       // Resolve input paths relative to workspace root and add slash at the end.
       asset.input = path.resolve(root, asset.input).replace(/\\/g, '/');
@@ -332,12 +372,16 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
       }
     }
 
+    // TODO: Investigate why this fails for some packages: wco.supportES2015 ? 6 : 5;
+    const terserEcma = 5;
+
     const terserOptions = {
       warnings: !!buildOptions.verbose,
       safari10: true,
       output: {
-        ecma: wco.supportES2015 ? 6 : 5,
-        comments: false,
+        ecma: terserEcma,
+        // default behavior (undefined value) is to keep only important comments (licenses, etc.)
+        comments: !buildOptions.extractLicenses && undefined,
         webkit: true,
       },
       // On server, we don't want to compress anything. We still set the ngDevMode = false for it
@@ -345,12 +389,12 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
       compress:
         buildOptions.platform == 'server'
           ? {
-              ecma: wco.supportES2015 ? 6 : 5,
+              ecma: terserEcma,
               global_defs: angularGlobalDefinitions,
               keep_fnames: true,
             }
           : {
-              ecma: wco.supportES2015 ? 6 : 5,
+              ecma: terserEcma,
               pure_getters: buildOptions.buildOptimizer,
               // PURE comments work best with 3 passes.
               // See https://github.com/webpack/webpack/issues/2899#issuecomment-317425926.
@@ -362,14 +406,14 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
       mangle:
         !manglingDisabled &&
         buildOptions.platform !== 'server' &&
-        (!differentialLoadingNeeded || (differentialLoadingNeeded && fullDifferential)),
+        !differentialLoadingMode,
     };
 
     extraMinimizers.push(
       new TerserPlugin({
         sourceMap: scriptsSourceMap,
         parallel: true,
-        cache: true,
+        cache: !cachingDisabled && findCachePath('terser-webpack'),
         extractComments: false,
         chunkFilter: (chunk: compilation.Chunk) =>
           !globalScriptsByBundleName.some(s => s.bundleName === chunk.name),
@@ -380,7 +424,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
       new TerserPlugin({
         sourceMap: scriptsSourceMap,
         parallel: true,
-        cache: true,
+        cache: !cachingDisabled && findCachePath('terser-webpack'),
         extractComments: false,
         chunkFilter: (chunk: compilation.Chunk) =>
           globalScriptsByBundleName.some(s => s.bundleName === chunk.name),
@@ -435,6 +479,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
     watch: buildOptions.watch,
     watchOptions: {
       poll: buildOptions.poll,
+      ignored: buildOptions.poll === undefined ? undefined : /[\\\/]node_modules[\\\/]/,
     },
     performance: {
       hints: false,
@@ -448,6 +493,8 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
           loader: 'file-loader',
           options: {
             name: `[name]${hashFormat.file}.[ext]`,
+            // Re-use emitted files from browser builder on the server.
+            emitFile: wco.buildOptions.platform !== 'server',
           },
         },
         {
@@ -466,6 +513,8 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
         },
         {
           test: /\.js$/,
+          // Factory files are processed by BO in the rules added in typescript.ts.
+          exclude: /(ngfactory|ngstyle)\.js$/,
           ...buildOptimizerUseRule,
         },
         {
@@ -474,6 +523,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
           enforce: 'pre',
           ...sourceMapUseRule,
         },
+        ...extraRules,
       ],
     },
     optimization: {

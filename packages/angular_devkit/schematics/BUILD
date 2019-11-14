@@ -5,13 +5,13 @@
 package(default_visibility = ["//visibility:public"])
 
 load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
-load("@npm_bazel_typescript//:defs.bzl", "ts_library")
+load("@npm_bazel_typescript//:index.bzl", "ts_library")
 
 # @external_begin
 load("@build_bazel_rules_nodejs//:defs.bzl", "npm_package")
 # @external_end
 
-licenses(["notice"])  # MIT License
+licenses(["notice"])
 
 # @angular-devkit/schematics
 
@@ -27,6 +27,8 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics",
     module_root = "src/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",  # TODO: get rid of this for 6.0
@@ -82,11 +84,14 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics/tasks",
     module_root = "tasks/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         ":schematics",
         "//packages/angular_devkit/core",
         "//packages/angular_devkit/core:node",
         "@npm//@types/node",
+        "@npm//ora",
         "@npm//rxjs",
         "@npm//tslint",
         "@npm//typescript",
@@ -106,6 +111,8 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics/tasks/node",
     module_root = "tasks/node/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         ":schematics",
         ":tasks",
@@ -130,6 +137,8 @@ ts_library(
         "tasks/tslint-fix/test/collection.json",
         "tasks/tslint-fix/test/rules/customRuleRule.js",
     ],
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     # @external_begin
     tsconfig = "//:tsconfig-test.json",
     # @external_end
@@ -169,6 +178,8 @@ ts_library(
     ),
     module_name = "@angular-devkit/schematics/tools",
     module_root = "tools/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         ":schematics",
         ":tasks",

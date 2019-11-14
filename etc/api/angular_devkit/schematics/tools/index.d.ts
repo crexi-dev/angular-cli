@@ -67,7 +67,6 @@ export declare abstract class FileSystemEngineHostBase implements FileSystemEngi
     getSchematicRuleFactory<OptionT extends object>(schematic: FileSystemSchematicDesc, _collection: FileSystemCollectionDesc): RuleFactory<OptionT>;
     hasTaskExecutor(name: string): boolean;
     listSchematicNames(collection: FileSystemCollectionDesc): string[];
-    listSchematics(collection: FileSystemCollection): string[];
     registerContextTransform(t: ContextTransform): void;
     registerOptionsTransform<T extends object, R extends object>(t: OptionTransform<T, R>): void;
     registerTaskExecutor<T>(factory: TaskExecutorFactory<T>, options?: T): void;
@@ -106,10 +105,8 @@ export declare class InvalidCollectionJsonException extends BaseException {
 }
 
 export declare class NodeModulesEngineHost extends FileSystemEngineHostBase {
-    constructor();
+    constructor(paths?: string[] | undefined);
     protected _resolveCollectionPath(name: string): string;
-    protected _resolvePackageJson(name: string, basedir?: string): string;
-    protected _resolvePath(name: string, basedir?: string): string;
     protected _resolveReferenceString(refString: string, parentPath: string): {
         ref: RuleFactory<{}>;
         path: string;
@@ -139,6 +136,7 @@ export declare class NodeWorkflow extends workflow.BaseWorkflow {
         root?: Path;
         packageManager?: string;
         registry?: schema.CoreSchemaRegistry;
+        resolvePaths?: string[];
     });
 }
 

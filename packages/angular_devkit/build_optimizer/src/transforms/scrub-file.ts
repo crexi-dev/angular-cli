@@ -17,6 +17,8 @@ export function testScrubFile(content: string) {
     '__decorate',
     'propDecorators',
     'ctorParameters',
+    'ɵsetClassMetadata',
+    'ɵɵsetNgModuleScope',
   ];
 
   return markers.some((marker) => content.indexOf(marker) !== -1);
@@ -50,20 +52,17 @@ function scrubFileTransformer(checker: ts.TypeChecker, isAngularCoreFile: boolea
           return ts.forEachChild(node, checkNodeForDecorators);
         }
         const exprStmt = node as ts.ExpressionStatement;
-        if (isDecoratorAssignmentExpression(exprStmt)) {
+        // Do checks that don't need the typechecker first and bail early.
+        if (isIvyPrivateCallExpression(exprStmt)
+          || isCtorParamsAssignmentExpression(exprStmt)) {
+          nodes.push(node);
+        } else if (isDecoratorAssignmentExpression(exprStmt)) {
           nodes.push(...pickDecorationNodesToRemove(exprStmt, ngMetadata, checker));
-        }
-        if (isDecorateAssignmentExpression(exprStmt, tslibImports, checker)) {
+        } else if (isDecorateAssignmentExpression(exprStmt, tslibImports, checker)
+          || isAngularDecoratorExpression(exprStmt, ngMetadata, tslibImports, checker)) {
           nodes.push(...pickDecorateNodesToRemove(exprStmt, tslibImports, ngMetadata, checker));
-        }
-        if (isAngularDecoratorMetadataExpression(exprStmt, ngMetadata, tslibImports, checker)) {
-          nodes.push(node);
-        }
-        if (isPropDecoratorAssignmentExpression(exprStmt)) {
+        } else if (isPropDecoratorAssignmentExpression(exprStmt)) {
           nodes.push(...pickPropDecorationNodesToRemove(exprStmt, ngMetadata, checker));
-        }
-        if (isCtorParamsAssignmentExpression(exprStmt)) {
-          nodes.push(node);
         }
       }
 
@@ -152,23 +151,10 @@ function isAngularCoreImport(node: ts.ImportDeclaration, isAngularCoreFile: bool
 
 // Check if assignment is `Clazz.decorators = [...];`.
 function isDecoratorAssignmentExpression(exprStmt: ts.ExpressionStatement): boolean {
-  if (exprStmt.expression.kind !== ts.SyntaxKind.BinaryExpression) {
+  if (!isAssignmentExpressionTo(exprStmt, 'decorators')) {
     return false;
   }
   const expr = exprStmt.expression as ts.BinaryExpression;
-  if (expr.left.kind !== ts.SyntaxKind.PropertyAccessExpression) {
-    return false;
-  }
-  const propAccess = expr.left as ts.PropertyAccessExpression;
-  if (propAccess.expression.kind !== ts.SyntaxKind.Identifier) {
-    return false;
-  }
-  if (propAccess.name.text !== 'decorators') {
-    return false;
-  }
-  if (expr.operatorToken.kind !== ts.SyntaxKind.FirstAssignment) {
-    return false;
-  }
   if (expr.right.kind !== ts.SyntaxKind.ArrayLiteralExpression) {
     return false;
   }
@@ -230,7 +216,7 @@ function isDecorateAssignmentExpression(
 }
 
 // Check if expression is `__decorate([smt, __metadata("design:type", Object)], ...)`.
-function isAngularDecoratorMetadataExpression(
+function isAngularDecoratorExpression(
   exprStmt: ts.ExpressionStatement,
   ngMetadata: ts.Node[],
   tslibImports: ts.NamespaceImport[],
@@ -252,48 +238,27 @@ function isAngularDecoratorMetadataExpression(
   }
   const decorateArray = callExpr.arguments[0] as ts.ArrayLiteralExpression;
   // Check first array entry for Angular decorators.
-  if (decorateArray.elements[0].kind !== ts.SyntaxKind.CallExpression) {
-    return false;
-  }
-  const decoratorCall = decorateArray.elements[0] as ts.CallExpression;
-  if (decoratorCall.expression.kind !== ts.SyntaxKind.Identifier) {
-    return false;
-  }
-  const decoratorId = decoratorCall.expression as ts.Identifier;
-  if (!identifierIsMetadata(decoratorId, ngMetadata, checker)) {
-    return false;
-  }
-  // Check second array entry for __metadata call.
-  if (decorateArray.elements[1].kind !== ts.SyntaxKind.CallExpression) {
-    return false;
-  }
-  const metadataCall = decorateArray.elements[1] as ts.CallExpression;
-  if (!isTslibHelper(metadataCall, '__metadata', tslibImports, checker)) {
+  if (decorateArray.elements.length === 0 || !ts.isCallExpression(decorateArray.elements[0])) {
     return false;
   }
 
-  return true;
+  return decorateArray.elements.some(decoratorCall => {
+    if (!ts.isCallExpression(decoratorCall) || !ts.isIdentifier(decoratorCall.expression)) {
+      return false;
+    }
+
+    const decoratorId = decoratorCall.expression;
+
+    return identifierIsMetadata(decoratorId, ngMetadata, checker);
+  });
 }
 
 // Check if assignment is `Clazz.propDecorators = [...];`.
 function isPropDecoratorAssignmentExpression(exprStmt: ts.ExpressionStatement): boolean {
-  if (exprStmt.expression.kind !== ts.SyntaxKind.BinaryExpression) {
+  if (!isAssignmentExpressionTo(exprStmt, 'propDecorators')) {
     return false;
   }
   const expr = exprStmt.expression as ts.BinaryExpression;
-  if (expr.left.kind !== ts.SyntaxKind.PropertyAccessExpression) {
-    return false;
-  }
-  const propAccess = expr.left as ts.PropertyAccessExpression;
-  if (propAccess.expression.kind !== ts.SyntaxKind.Identifier) {
-    return false;
-  }
-  if (propAccess.name.text !== 'propDecorators') {
-    return false;
-  }
-  if (expr.operatorToken.kind !== ts.SyntaxKind.FirstAssignment) {
-    return false;
-  }
   if (expr.right.kind !== ts.SyntaxKind.ObjectLiteralExpression) {
     return false;
   }
@@ -303,6 +268,20 @@ function isPropDecoratorAssignmentExpression(exprStmt: ts.ExpressionStatement): 
 
 // Check if assignment is `Clazz.ctorParameters = [...];`.
 function isCtorParamsAssignmentExpression(exprStmt: ts.ExpressionStatement): boolean {
+  if (!isAssignmentExpressionTo(exprStmt, 'ctorParameters')) {
+    return false;
+  }
+  const expr = exprStmt.expression as ts.BinaryExpression;
+  if (expr.right.kind !== ts.SyntaxKind.FunctionExpression
+    && expr.right.kind !== ts.SyntaxKind.ArrowFunction
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function isAssignmentExpressionTo(exprStmt: ts.ExpressionStatement, name: string) {
   if (exprStmt.expression.kind !== ts.SyntaxKind.BinaryExpression) {
     return false;
   }
@@ -311,7 +290,7 @@ function isCtorParamsAssignmentExpression(exprStmt: ts.ExpressionStatement): boo
     return false;
   }
   const propAccess = expr.left as ts.PropertyAccessExpression;
-  if (propAccess.name.text !== 'ctorParameters') {
+  if (propAccess.name.text !== name) {
     return false;
   }
   if (propAccess.expression.kind !== ts.SyntaxKind.Identifier) {
@@ -320,9 +299,22 @@ function isCtorParamsAssignmentExpression(exprStmt: ts.ExpressionStatement): boo
   if (expr.operatorToken.kind !== ts.SyntaxKind.FirstAssignment) {
     return false;
   }
-  if (expr.right.kind !== ts.SyntaxKind.FunctionExpression
-    && expr.right.kind !== ts.SyntaxKind.ArrowFunction
-  ) {
+
+  return true;
+}
+
+function isIvyPrivateCallExpression(exprStmt: ts.ExpressionStatement) {
+  const callExpr = exprStmt.expression;
+  if (!ts.isCallExpression(callExpr)) {
+    return false;
+  }
+  const propAccExpr = callExpr.expression;
+  if (!ts.isPropertyAccessExpression(propAccExpr)) {
+    return false;
+  }
+
+  if (propAccExpr.name.text != 'ɵsetClassMetadata'
+    && propAccExpr.name.text != 'ɵɵsetNgModuleScope') {
     return false;
   }
 
@@ -357,16 +349,19 @@ function pickDecorateNodesToRemove(
   ngMetadata: ts.Node[],
   checker: ts.TypeChecker,
 ): ts.Node[] {
+  let callExpr: ts.CallExpression | undefined;
+  if (ts.isCallExpression(exprStmt.expression)) {
+    callExpr = exprStmt.expression;
+  } else if (ts.isBinaryExpression(exprStmt.expression)) {
+    const expr = exprStmt.expression;
+    if (ts.isCallExpression(expr.right)) {
+      callExpr = expr.right;
+    } else if (ts.isBinaryExpression(expr.right) && ts.isCallExpression(expr.right.right)) {
+      callExpr = expr.right.right;
+    }
+  }
 
-  const expr = expect<ts.BinaryExpression>(exprStmt.expression, ts.SyntaxKind.BinaryExpression);
-  let callExpr: ts.CallExpression;
-
-  if (expr.right.kind === ts.SyntaxKind.CallExpression) {
-    callExpr = expect<ts.CallExpression>(expr.right, ts.SyntaxKind.CallExpression);
-  } else if (expr.right.kind === ts.SyntaxKind.BinaryExpression) {
-    const innerExpr = expr.right as ts.BinaryExpression;
-    callExpr = expect<ts.CallExpression>(innerExpr.right, ts.SyntaxKind.CallExpression);
-  } else {
+  if (!callExpr) {
     return [];
   }
 
@@ -398,10 +393,6 @@ function pickDecorateNodesToRemove(
     if (el.arguments[0].kind !== ts.SyntaxKind.StringLiteral) {
       return false;
     }
-    const metadataTypeId = el.arguments[0] as ts.StringLiteral;
-    if (metadataTypeId.text !== 'design:paramtypes') {
-      return false;
-    }
 
     return true;
   });
@@ -419,6 +410,7 @@ function pickDecorateNodesToRemove(
 
     return true;
   });
+
   ngDecoratorCalls.push(...metadataCalls, ...paramCalls);
 
   // If all decorators are metadata decorators then return the whole `Class = __decorate([...])'`

@@ -60,19 +60,24 @@ export async function createArchitect(workspaceRoot: Path) {
   };
 }
 
+export interface BrowserBuildOutput {
+  output: BuilderOutput;
+  files: { [file: string]: Promise<string> };
+}
+
 export async function browserBuild(
   architect: Architect,
   host: virtualFs.Host,
   target: Target,
   overrides?: json.JsonObject,
   scheduleOptions?: ScheduleOptions,
-): Promise<{ output: BuilderOutput; files: { [file: string]: Promise<string> } }> {
+): Promise<BrowserBuildOutput> {
   const run = await architect.scheduleTarget(target, overrides, scheduleOptions);
   const output = (await run.result) as BrowserBuilderOutput;
   expect(output.success).toBe(true);
 
-  expect(output.outputPath).not.toBeUndefined();
-  const outputPath = normalize(output.outputPath);
+  expect(output.outputPaths[0]).not.toBeUndefined();
+  const outputPath = normalize(output.outputPaths[0]);
 
   const fileNames = await host.list(outputPath).toPromise();
   const files = fileNames.reduce((acc: { [name: string]: Promise<string> }, path) => {

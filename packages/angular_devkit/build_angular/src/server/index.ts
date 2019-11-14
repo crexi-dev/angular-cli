@@ -7,30 +7,37 @@
  */
 import { BuilderContext, BuilderOutput, createBuilder } from '@angular-devkit/architect';
 import { runWebpack } from '@angular-devkit/build-webpack';
-import { json, normalize } from '@angular-devkit/core';
-import { NodeJsSyncHost } from '@angular-devkit/core/node';
+import { json } from '@angular-devkit/core';
 import * as path from 'path';
-import { Observable, from, of } from 'rxjs';
+import { Observable, from } from 'rxjs';
 import { concatMap, map } from 'rxjs/operators';
+import { ScriptTarget } from 'typescript';
 import * as webpack from 'webpack';
-import { WebpackConfigOptions } from '../angular-cli-files/models/build-options';
 import {
   getAotConfig,
   getCommonConfig,
-  getNonAotConfig,
   getServerConfig,
   getStatsConfig,
   getStylesConfig,
 } from '../angular-cli-files/models/webpack-configs';
+import { readTsconfig } from '../angular-cli-files/utilities/read-tsconfig';
 import { ExecutionTransformer } from '../transforms';
 import { NormalizedBrowserBuilderSchema, deleteOutputDir } from '../utils';
+import { i18nInlineEmittedFiles } from '../utils/i18n-inlining';
+import { I18nOptions } from '../utils/i18n-options';
+import { ensureOutputPaths } from '../utils/output-paths';
 import { assertCompatibleAngularVersion } from '../utils/version';
-import { generateBrowserWebpackConfigFromContext } from '../utils/webpack-browser-config';
+import { generateI18nBrowserWebpackConfigFromContext } from '../utils/webpack-browser-config';
 import { Schema as ServerBuilderOptions } from './schema';
 
 // If success is true, outputPath should be set.
 export type ServerBuilderOutput = json.JsonObject & BuilderOutput & {
-  outputPath?: string;
+  baseOutputPath: string;
+  outputPaths: string[];
+  /**
+   * @deprecated in version 9. Use 'outputPaths' instead.
+   */
+  outputPath: string;
 };
 
 export { ServerBuilderOptions };
@@ -42,32 +49,58 @@ export function execute(
     webpackConfiguration?: ExecutionTransformer<webpack.Configuration>;
   } = {},
 ): Observable<ServerBuilderOutput> {
-  const host = new NodeJsSyncHost();
   const root = context.workspaceRoot;
 
   // Check Angular version.
-  assertCompatibleAngularVersion(context.workspaceRoot, context.logger);
+  assertCompatibleAngularVersion(root, context.logger);
 
-  return from(buildServerWebpackConfig(options, context)).pipe(
-    concatMap(async v => transforms.webpackConfiguration ? transforms.webpackConfiguration(v) : v),
-    concatMap(v => {
-      if (options.deleteOutputPath) {
-        return deleteOutputDir(normalize(root), normalize(options.outputPath), host).pipe(
-          map(() => v),
-        );
-      } else {
-        return of(v);
-      }
+  const tsConfig = readTsconfig(options.tsConfig, root);
+  const target = tsConfig.options.target || ScriptTarget.ES5;
+  const baseOutputPath = path.resolve(root, options.outputPath);
+  let outputPaths: undefined | string[];
+
+  return from(initialize(options, context, transforms.webpackConfiguration)).pipe(
+    concatMap(({ config, i18n }) => {
+      return runWebpack(config, context).pipe(
+        concatMap(async output => {
+          const { emittedFiles = [], webpackStats } = output;
+          if (!output.success || !i18n.shouldInline) {
+            return output;
+          }
+
+          if (!webpackStats) {
+            throw new Error('Webpack stats build result is required.');
+          }
+
+          outputPaths = ensureOutputPaths(baseOutputPath, i18n);
+
+          const success = await i18nInlineEmittedFiles(
+            context,
+            emittedFiles,
+            i18n,
+            baseOutputPath,
+            outputPaths,
+            [],
+            // tslint:disable-next-line: no-non-null-assertion
+            webpackStats.outputPath!,
+            target <= ScriptTarget.ES5,
+            options.i18nMissingTranslation,
+          );
+
+          return { output, success };
+        }),
+      );
     }),
-    concatMap(webpackConfig => runWebpack(webpackConfig, context)),
     map(output => {
-      if (output.success === false) {
+      if (!output.success) {
         return output as ServerBuilderOutput;
       }
 
       return {
         ...output,
-        outputPath: path.resolve(root, options.outputPath),
+        baseOutputPath,
+        outputPath: baseOutputPath,
+        outputPaths: outputPaths || [baseOutputPath],
       } as ServerBuilderOutput;
     }),
   );
@@ -77,19 +110,16 @@ export default createBuilder<json.JsonObject & ServerBuilderOptions, ServerBuild
   execute,
 );
 
-function getCompilerConfig(wco: WebpackConfigOptions) {
-  if (wco.buildOptions.main || wco.buildOptions.polyfills) {
-    return wco.buildOptions.aot ? getAotConfig(wco) : getNonAotConfig(wco);
-  }
-
-  return {};
-}
-
-async function buildServerWebpackConfig(
+async function initialize(
   options: ServerBuilderOptions,
   context: BuilderContext,
-) {
-  const { config } = await generateBrowserWebpackConfigFromContext(
+  webpackConfigurationTransform?: ExecutionTransformer<webpack.Configuration>,
+): Promise<{
+  config: webpack.Configuration;
+  i18n: I18nOptions;
+}> {
+  const originalOutputPath = options.outputPath;
+  const { config, i18n } = await generateI18nBrowserWebpackConfigFromContext(
     {
       ...options,
       buildOptimizer: false,
@@ -102,9 +132,21 @@ async function buildServerWebpackConfig(
       getServerConfig(wco),
       getStylesConfig(wco),
       getStatsConfig(wco),
-      getCompilerConfig(wco),
+      getAotConfig(wco),
     ],
   );
 
-  return config[0];
+  let transformedConfig;
+  if (webpackConfigurationTransform) {
+    transformedConfig = await webpackConfigurationTransform(config);
+  }
+
+  if (options.deleteOutputPath) {
+    deleteOutputDir(
+      context.workspaceRoot,
+      originalOutputPath,
+    );
+  }
+
+  return { config: transformedConfig || config, i18n };
 }

@@ -76,7 +76,9 @@ async function updateWebdriver() {
   } as unknown as JSON);
 }
 
-async function execute(
+export { ProtractorBuilderOptions };
+
+export async function execute(
   options: ProtractorBuilderOptions,
   context: BuilderContext,
 ): Promise<BuilderOutput> {
@@ -92,7 +94,7 @@ async function execute(
     await updateWebdriver();
   }
 
-  let baseUrl;
+  let baseUrl = options.baseUrl;
   let server;
   if (options.devServerTarget) {
     const target = targetFromTargetString(options.devServerTarget);

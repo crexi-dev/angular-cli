@@ -13,49 +13,65 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as semver from 'semver';
+import { PackageManager } from '../lib/config/schema';
 import { Command } from '../models/command';
 import { Arguments } from '../models/interface';
+import { runTempPackageBin } from '../tasks/install-package';
 import { colors } from '../utilities/color';
 import { getPackageManager } from '../utilities/package-manager';
 import {
   PackageIdentifier,
   PackageManifest,
   PackageMetadata,
+  fetchPackageManifest,
   fetchPackageMetadata,
 } from '../utilities/package-metadata';
 import { PackageTreeNode, findNodeDependencies, readPackageTree } from '../utilities/package-tree';
 import { Schema as UpdateCommandSchema } from './update';
 
-const npa = require('npm-package-arg');
+const npa = require('npm-package-arg') as (selector: string) => PackageIdentifier;
+const pickManifest = require('npm-pick-manifest') as (
+  metadata: PackageMetadata,
+  selector: string,
+) => PackageManifest;
 
 const oldConfigFileNames = ['.angular-cli.json', 'angular-cli.json'];
+
+const NG_VERSION_9_POST_MSG = colors.cyan(
+  '\nYour project has been updated to Angular version 9!\n' +
+  'For more info, please see: https://v9.angular.io/guide/updating-to-version-9',
+);
 
 export class UpdateCommand extends Command<UpdateCommandSchema> {
   public readonly allowMissingWorkspace = true;
 
   private workflow: NodeWorkflow;
+  private packageManager: PackageManager;
 
   async initialize() {
+    this.packageManager = await getPackageManager(this.workspace.root);
     this.workflow = new NodeWorkflow(
       new virtualFs.ScopedHost(new NodeJsSyncHost(), normalize(this.workspace.root)),
       {
-        packageManager: await getPackageManager(this.workspace.root),
+        packageManager: this.packageManager,
         root: normalize(this.workspace.root),
+        // __dirname -> favor @schematics/update from this package
+        // Otherwise, use packages from the active workspace (migrations)
+        resolvePaths: [__dirname, this.workspace.root],
       },
     );
-
     this.workflow.engineHost.registerOptionsTransform(
       validateOptionsWithSchema(this.workflow.registry),
     );
   }
 
-  async executeSchematic(
+  private async executeSchematic(
     collection: string,
     schematic: string,
     options = {},
   ): Promise<{ success: boolean; files: Set<string> }> {
     let error = false;
-    const logs: string[] = [];
+    let logs: string[] = [];
     const files = new Set<string>();
 
     const reporterSubscription = this.workflow.reporter.subscribe(event => {
@@ -92,6 +108,7 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
         if (!error) {
           // Output the logging queue, no error happened.
           logs.forEach(log => this.logger.info(log));
+          logs = [];
         }
       }
     });
@@ -122,12 +139,15 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
     }
   }
 
-  async executeMigrations(
+  /**
+   * @return Whether or not the migrations were performed successfully.
+   */
+  private async executeMigrations(
     packageName: string,
     collectionPath: string,
     range: semver.Range,
     commit = false,
-  ) {
+  ): Promise<boolean> {
     const collection = this.workflow.engine.createCollection(collectionPath);
 
     const migrations = [];
@@ -150,45 +170,64 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
       return true;
     }
 
-    const startingGitSha = this.findCurrentGitSha();
-
     migrations.sort((a, b) => semver.compare(a.version, b.version) || a.name.localeCompare(b.name));
 
+    this.logger.info(
+      colors.cyan(`** Executing migrations of package '${packageName}' **\n`),
+    );
+
     for (const migration of migrations) {
-      this.logger.info(
-        `** Executing migrations for version ${migration.version} of package '${packageName}' **`,
-      );
+      this.logger.info(`${colors.symbols.pointer} ${migration.description.replace(/\. /g, '.\n  ')}`);
 
       const result = await this.executeSchematic(migration.collection.name, migration.name);
       if (!result.success) {
-        if (startingGitSha !== null) {
-          const currentGitSha = this.findCurrentGitSha();
-          if (currentGitSha !== startingGitSha) {
-            this.logger.warn(`git HEAD was at ${startingGitSha} before migrations.`);
-          }
-        }
+        this.logger.error(`${colors.symbols.cross} Migration failed. See above for further details.\n`);
 
         return false;
       }
 
+      this.logger.info('  Migration completed.');
+
       // Commit migration
       if (commit) {
-        let message = `migrate workspace for ${packageName}@${migration.version}`;
-        if (migration.description) {
-          message += '\n' + migration.description;
+        const commitPrefix = `${packageName} migration - ${migration.name}`;
+        const commitMessage = migration.description
+          ? `${commitPrefix}\n${migration.description}`
+          : commitPrefix;
+        const committed = this.commit(commitMessage);
+        if (!committed) {
+          // Failed to commit, something went wrong. Abort the update.
+          return false;
         }
-        // TODO: Use result.files once package install tasks are accounted
-        this.createCommit(message, []);
       }
+
+      this.logger.info(''); // Extra trailing newline.
     }
+
+    return true;
   }
 
   // tslint:disable-next-line:no-big-function
   async run(options: UpdateCommandSchema & Arguments) {
+    // Check if the current installed CLI version is older than the latest version.
+    if (await this.checkCLILatestVersion(options.verbose, options.next)) {
+      this.logger.warn(
+        `The installed Angular CLI version is older than the latest ${options.next ? 'pre-release' : 'stable'} version.\n` +
+        'Installing a temporary version to perform the update.',
+      );
+
+      return runTempPackageBin(
+        `@angular/cli@${options.next ? 'next' : 'latest'}`,
+        this.logger,
+        this.packageManager,
+        process.argv.slice(2),
+      );
+    }
+
     const packages: PackageIdentifier[] = [];
     for (const request of options['--'] || []) {
       try {
-        const packageIdentifier: PackageIdentifier = npa(request);
+        const packageIdentifier = npa(request);
 
         // only registry identifiers are supported
         if (!packageIdentifier.registry) {
@@ -236,19 +275,18 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
     if (!statusCheck && !this.checkCleanGit()) {
       if (options.allowDirty) {
         this.logger.warn(
-          'Repository is not clean.  Update changes will be mixed with pre-existing changes.',
+          'Repository is not clean. Update changes will be mixed with pre-existing changes.',
         );
       } else {
         this.logger.error(
-          'Repository is not clean.  Please commit or stash any changes before updating.',
+          'Repository is not clean. Please commit or stash any changes before updating.',
         );
 
         return 2;
       }
     }
 
-    const packageManager = await getPackageManager(this.workspace.root);
-    this.logger.info(`Using package manager: '${packageManager}'`);
+    this.logger.info(`Using package manager: '${this.packageManager}'`);
 
     // Special handling for Angular CLI 1.x migrations
     if (
@@ -271,13 +309,24 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
 
     this.logger.info(`Found ${Object.keys(rootDependencies).length} dependencies.`);
 
-    if (options.all || packages.length === 0) {
-      // Either update all packages or show status
+    if (options.all) {
+      // 'all' option and a zero length packages have already been checked.
+      // Add all direct dependencies to be updated
+      for (const dep of Object.keys(rootDependencies)) {
+        const packageIdentifier = npa(dep);
+        if (options.next) {
+          packageIdentifier.fetchSpec = 'next';
+        }
+
+        packages.push(packageIdentifier);
+      }
+    } else if (packages.length === 0) {
+      // Show status
       const { success } = await this.executeSchematic('@schematics/update', 'update', {
         force: options.force || false,
         next: options.next || false,
         verbose: options.verbose || false,
-        packageManager,
+        packageManager: this.packageManager,
         packages: options.all ? Object.keys(rootDependencies) : [],
       });
 
@@ -385,19 +434,30 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
         '>' + from + ' <=' + (options.to || packageNode.package.version),
       );
 
-      const result = await this.executeMigrations(
+      const success = await this.executeMigrations(
         packageName,
         migrations,
         migrationRange,
-        !options.skipCommits,
+        options.createCommits,
       );
 
-      return result ? 1 : 0;
+      if (success) {
+        if (
+          packageName === '@angular/core'
+          && (options.to || packageNode.package.version).split('.')[0] === '9'
+        ) {
+          this.logger.info(NG_VERSION_9_POST_MSG);
+        }
+
+        return 0;
+      }
+
+      return 1;
     }
 
     const requests: {
       identifier: PackageIdentifier;
-      node: PackageTreeNode | string;
+      node: PackageTreeNode;
     }[] = [];
 
     // Validate packages actually are part of the workspace
@@ -410,11 +470,7 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
       }
 
       // If a specific version is requested and matches the installed version, skip.
-      if (
-        pkg.type === 'version' &&
-        typeof node === 'object' &&
-        node.package.version === pkg.fetchSpec
-      ) {
+      if (pkg.type === 'version' && node.package.version === pkg.fetchSpec) {
         this.logger.info(`Package '${pkg.name}' is already at '${pkg.fetchSpec}'.`);
         continue;
       }
@@ -448,18 +504,34 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
       // Try to find a package version based on the user requested package specifier
       // registry specifier types are either version, range, or tag
       let manifest: PackageManifest | undefined;
-      if (requestIdentifier.type === 'version') {
-        manifest = metadata.versions.get(requestIdentifier.fetchSpec);
-      } else if (requestIdentifier.type === 'range') {
-        const maxVersion = semver.maxSatisfying(
-          Array.from(metadata.versions.keys()),
-          requestIdentifier.fetchSpec,
-        );
-        if (maxVersion) {
-          manifest = metadata.versions.get(maxVersion);
+      if (
+        requestIdentifier.type === 'version' ||
+        requestIdentifier.type === 'range' ||
+        requestIdentifier.type === 'tag'
+      ) {
+        try {
+          manifest = pickManifest(metadata, requestIdentifier.fetchSpec);
+        } catch (e) {
+          if (e.code === 'ETARGET') {
+            // If not found and next was used and user did not provide a specifier, try latest.
+            // Package may not have a next tag.
+            if (
+              requestIdentifier.type === 'tag' &&
+              requestIdentifier.fetchSpec === 'next' &&
+              !requestIdentifier.rawSpec
+            ) {
+              try {
+                manifest = pickManifest(metadata, 'latest');
+              } catch (e) {
+                if (e.code !== 'ETARGET' && e.code !== 'ENOVERSIONS') {
+                  throw e;
+                }
+              }
+            }
+          } else if (e.code !== 'ENOVERSIONS') {
+            throw e;
+          }
         }
-      } else if (requestIdentifier.type === 'tag') {
-        manifest = metadata.tags[requestIdentifier.fetchSpec];
       }
 
       if (!manifest) {
@@ -470,10 +542,7 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
         return 1;
       }
 
-      if (
-        (typeof node === 'string' && manifest.version === node) ||
-        (typeof node === 'object' && manifest.version === node.package.version)
-      ) {
+      if (manifest.version === node.package.version) {
         this.logger.info(`Package '${packageName}' is already up to date.`);
         continue;
       }
@@ -488,13 +557,18 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
     const { success } = await this.executeSchematic('@schematics/update', 'update', {
       verbose: options.verbose || false,
       force: options.force || false,
-      packageManager,
+      next: !!options.next,
+      packageManager: this.packageManager,
       packages: packagesToUpdate,
       migrateExternal: true,
     });
 
-    if (success && !options.skipCommits) {
-      this.createCommit('Angular CLI update\n' + packagesToUpdate.join('\n'), []);
+    if (success && options.createCommits) {
+      const committed = this.commit(
+          `Angular CLI update for packages - ${packagesToUpdate.join(', ')}`);
+      if (!committed) {
+        return 1;
+      }
     }
 
     // This is a temporary workaround to allow data to be passed back from the update schematic
@@ -512,20 +586,71 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
           migration.package,
           migration.collection,
           new semver.Range('>' + migration.from + ' <=' + migration.to),
-          !options.skipCommits,
+          options.createCommits,
         );
 
         if (!result) {
           return 0;
         }
       }
+
+      if (migrations.some(m => m.package === '@angular/core' && m.to.split('.')[0] === '9')) {
+        this.logger.info(NG_VERSION_9_POST_MSG);
+      }
     }
 
     return success ? 0 : 1;
   }
 
-  checkCleanGit() {
+  /**
+   * @return Whether or not the commit was successful.
+   */
+  private commit(message: string): boolean {
+    // Check if a commit is needed.
+    let commitNeeded: boolean;
     try {
+      commitNeeded = hasChangesToCommit();
+    } catch (err) {
+      this.logger.error(`  Failed to read Git tree:\n${err.stderr}`);
+
+      return false;
+    }
+
+    if (!commitNeeded) {
+      this.logger.info('  No changes to commit after migration.');
+
+      return true;
+    }
+
+    // Commit changes and abort on error.
+    try {
+      createCommit(message);
+    } catch (err) {
+      this.logger.error(
+        `Failed to commit update (${message}):\n${err.stderr}`);
+
+      return false;
+    }
+
+    // Notify user of the commit.
+    const hash = findCurrentGitSha();
+    const shortMessage = message.split('\n')[0];
+    if (hash) {
+      this.logger.info(`  Committed migration step (${getShortHash(hash)}): ${
+          shortMessage}.`);
+    } else {
+      // Commit was successful, but reading the hash was not. Something weird happened,
+      // but nothing that would stop the update. Just log the weirdness and continue.
+      this.logger.info(`  Committed migration step: ${shortMessage}.`);
+      this.logger.warn('  Failed to look up hash of most recent commit, continuing anyways.');
+    }
+
+    return true;
+  }
+
+  private checkCleanGit(): boolean {
+    try {
+      const topLevel = execSync('git rev-parse --show-toplevel', { encoding: 'utf8', stdio: 'pipe' });
       const result = execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' });
       if (result.trim().length === 0) {
         return true;
@@ -535,7 +660,7 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
       for (const entry of result.split('\n')) {
         const relativeEntry = path.relative(
           path.resolve(this.workspace.root),
-          path.resolve(entry.slice(3).trim()),
+          path.resolve(topLevel.trim(), entry.slice(3).trim()),
         );
 
         if (!relativeEntry.startsWith('..') && !path.isAbsolute(relativeEntry)) {
@@ -547,23 +672,65 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
     return true;
   }
 
-  createCommit(message: string, files: string[]) {
-    try {
-      execSync('git add -A ' + files.join(' '), { encoding: 'utf8', stdio: 'pipe' });
+  /**
+   * Checks if the current installed CLI version is older than the latest version.
+   * @returns `true` when the installed version is older.
+  */
+  private async checkCLILatestVersion(verbose = false, next = false): Promise<boolean> {
+    const { version: installedCLIVersion } = require('../package.json');
 
-      execSync(`git commit --no-verify -m "${message}"`, { encoding: 'utf8', stdio: 'pipe' });
-    } catch (error) {}
+    const LatestCLIManifest = await fetchPackageManifest(
+      `@angular/cli@${next ? 'next' : 'latest'}`,
+      this.logger,
+      {
+        verbose,
+        usingYarn: this.packageManager === PackageManager.Yarn,
+      },
+    );
+
+    return semver.lt(installedCLIVersion, LatestCLIManifest.version);
   }
+}
 
-  findCurrentGitSha(): string | null {
-    try {
-      const result = execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: 'pipe' });
+/**
+ * @return Whether or not the working directory has Git changes to commit.
+ */
+function hasChangesToCommit(): boolean {
+  // List all modified files not covered by .gitignore.
+  const files = execSync('git ls-files -m -d -o --exclude-standard').toString();
 
-      return result.trim();
-    } catch {
-      return null;
-    }
+  // If any files are returned, then there must be something to commit.
+  return files !== '';
+}
+
+/**
+ * Precondition: Must have pending changes to commit, they do not need to be staged.
+ * Postcondition: The Git working tree is committed and the repo is clean.
+ * @param message The commit message to use.
+ */
+function createCommit(message: string) {
+  // Stage entire working tree for commit.
+  execSync('git add -A', { encoding: 'utf8', stdio: 'pipe' });
+
+  // Commit with the message passed via stdin to avoid bash escaping issues.
+  execSync('git commit --no-verify -F -', { encoding: 'utf8', stdio: 'pipe', input: message });
+}
+
+/**
+ * @return The Git SHA hash of the HEAD commit. Returns null if unable to retrieve the hash.
+ */
+function findCurrentGitSha(): string | null {
+  try {
+    const hash = execSync('git rev-parse HEAD', {encoding: 'utf8', stdio: 'pipe'});
+
+    return hash.trim();
+  } catch {
+    return null;
   }
+}
+
+function getShortHash(commitHash: string): string {
+  return commitHash.slice(0, 9);
 }
 
 function coerceVersionNumber(version: string | undefined): string | null {

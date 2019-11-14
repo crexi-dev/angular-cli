@@ -5,7 +5,7 @@
 package(default_visibility = ["//visibility:public"])
 
 load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
-load("@npm_bazel_typescript//:defs.bzl", "ts_library")
+load("@npm_bazel_typescript//:index.bzl", "ts_library")
 
 # @external_begin
 load("@build_bazel_rules_nodejs//:defs.bzl", "npm_package")
@@ -30,15 +30,20 @@ ts_library(
     ],
     module_name = "@angular-devkit/core",
     module_root = "src/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
-        "@npm//rxjs",
+        "@npm//@types/fast-json-stable-stringify",
         "@npm//@types/node",
         "@npm//ajv",
         "@npm//magic-string",
+        "@npm//rxjs",
         "@npm//source-map",
-        # @typings: es2015.core
-        # @typings: es2015.symbol.wellknown
-        # @typings: es2016.array.include
+        # @node_module: typescript:es2015.core
+        # @node_module: typescript:es2015.proxy
+        # @node_module: typescript:es2015.reflect
+        # @node_module: typescript:es2015.symbol.wellknown
+        # @node_module: typescript:es2016.array.include
     ],
 )
 
@@ -55,6 +60,8 @@ ts_library(
         "src/experimental/workspace/test/test-workspace.json",
         "src/experimental/workspace/workspace-schema.json",
     ],
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     # @external_begin
     tsconfig = "//:tsconfig-test.json",
     # @external_end
@@ -73,8 +80,10 @@ jasmine_node_test(
     # TODO: Audit tests to determine if tests can be run in RBE environments
     local = True,
     deps = [
-        "@npm//jasmine",
-        "@npm//source-map",
+        # @node_module: ajv
+        # @node_module: fast_json_stable_stringify
+        # @node_module: magic_string
+        # @node_module: source_map
     ],
 )
 
@@ -93,6 +102,8 @@ ts_library(
     ),
     module_name = "@angular-devkit/core/node",
     module_root = "node/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         ":core",
         "@npm//@types/node",
@@ -129,10 +140,10 @@ jasmine_node_test(
     local = True,
     deps = [
         "@npm//chokidar",
-        "@npm//jasmine",
-        "@npm//source-map",
         "@npm//temp",
-        "@npm//tslint",
+        # @node_module: ajv
+        # @node_module: fast_json_stable_stringify
+        # @node_module: magic_string
     ],
 )
 
@@ -150,6 +161,8 @@ ts_library(
     ),
     module_name = "@angular-devkit/core/node/testing",
     module_root = "node/testing/index.d.ts",
+    # The attribute below is needed in g3 to turn off strict typechecking
+    # strict_checks = False,
     deps = [
         ":core",
         ":node",

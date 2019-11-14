@@ -319,6 +319,107 @@ describe('scrub-file', () => {
       expect(testScrubFile(input)).toBeTruthy();
       expect(tags.oneLine`${transformCore(input)}`).toEqual(tags.oneLine`${output}`);
     });
+
+    it('removes Angular decorators calls in __decorate when no __metadata is present', () => {
+      const input = tags.stripIndent`
+        import { __decorate } from 'tslib';
+        import { Component, ElementRef, ContentChild} from '@angular/core';
+
+        var FooBarComponent = /** @class */ (function () {
+            function FooBarComponent(elementRef) {
+                this.elementRef = elementRef;
+                this.inlineButtons = [];
+                this.menuButtons = [];
+            }
+            FooBarComponent.ctorParameters = function () { return [
+                { type: ElementRef }
+            ]; };
+            __decorate([
+                ContentChild('heading', { read: ElementRef, static: true })
+            ], FooBarComponent.prototype, "buttons", void 0);
+            FooBarComponent = __decorate([
+                Component({
+                  selector: 'custom-foo-bar',
+                  template: '',
+                  styles: []
+                })
+            ], FooBarComponent);
+            return FooBarComponent;
+        }());
+      `;
+
+      const output = tags.stripIndent`
+        import { __decorate } from 'tslib';
+        import { Component, ElementRef, ContentChild } from '@angular/core';
+
+        var FooBarComponent = /** @class */ (function () {
+          function FooBarComponent(elementRef) {
+            this.elementRef = elementRef;
+            this.inlineButtons = [];
+            this.menuButtons = [];
+          }
+
+          return FooBarComponent;
+        }());
+      `;
+
+      expect(testScrubFile(input)).toBeTruthy();
+      expect(tags.oneLine`${transformCore(input)}`).toEqual(tags.oneLine`${output}`);
+    });
+
+    it('removes only Angular decorators calls in __decorate when no __metadata is present', () => {
+      const input = tags.stripIndent`
+        import { __decorate } from 'tslib';
+        import { Component, ElementRef, ContentChild} from '@angular/core';
+        import { NotComponent } from 'another-lib';
+
+        var FooBarComponent = /** @class */ (function () {
+            function FooBarComponent(elementRef) {
+                this.elementRef = elementRef;
+                this.inlineButtons = [];
+                this.menuButtons = [];
+            }
+            FooBarComponent.ctorParameters = function () { return [
+                { type: ElementRef }
+            ]; };
+            __decorate([
+                NotComponent(),
+                ContentChild('heading', { read: ElementRef, static: true })
+            ], FooBarComponent.prototype, "buttons", void 0);
+            FooBarComponent = __decorate([
+                NotComponent(),
+                Component({
+                  selector: 'custom-foo-bar',
+                  template: '',
+                  styles: []
+                })
+            ], FooBarComponent);
+            return FooBarComponent;
+        }());
+      `;
+
+      const output = tags.stripIndent`
+        import { __decorate } from 'tslib';
+        import { Component, ElementRef, ContentChild } from '@angular/core';
+        import { NotComponent } from 'another-lib';
+
+        var FooBarComponent = /** @class */ (function () {
+          function FooBarComponent(elementRef) {
+            this.elementRef = elementRef;
+            this.inlineButtons = [];
+            this.menuButtons = [];
+          }
+          __decorate([
+            NotComponent()
+          ], FooBarComponent.prototype, "buttons", void 0);
+
+          FooBarComponent = __decorate([ NotComponent() ], FooBarComponent); return FooBarComponent;
+          }());
+      `;
+
+      expect(testScrubFile(input)).toBeTruthy();
+      expect(tags.oneLine`${transformCore(input)}`).toEqual(tags.oneLine`${output}`);
+    });
   });
 
   describe('__metadata', () => {
@@ -609,6 +710,44 @@ describe('scrub-file', () => {
         }());
       `;
 
+      expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
+    });
+  });
+
+  describe('Ivy', () => {
+    it('removes ɵsetClassMetadata call', () => {
+      const output = tags.stripIndent`
+        import { Component } from '@angular/core';
+        ${clazz}
+      `;
+      const input = tags.stripIndent`
+        ${output}
+        /*@__PURE__*/ i0.ɵsetClassMetadata(Clazz, [{
+                type: Component,
+                args: [{
+                        selector: 'app-lazy',
+                        template: 'very lazy',
+                        styles: []
+                    }]
+            }], null, null);
+      `;
+
+      expect(testScrubFile(input)).toBeTruthy();
+      expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
+    });
+
+    it('removes ɵɵsetNgModuleScope call', () => {
+      const output = tags.stripIndent`
+        import { CommonModule } from '@angular/common';
+        import * as i0 from "@angular/core";
+        ${clazz}
+      `;
+      const input = tags.stripIndent`
+        ${output}
+        /*@__PURE__*/ i0.ɵɵsetNgModuleScope(Clazz, { declarations: [], imports: [CommonModule] });
+      `;
+
+      expect(testScrubFile(input)).toBeTruthy();
       expect(tags.oneLine`${transform(input)}`).toEqual(tags.oneLine`${output}`);
     });
   });

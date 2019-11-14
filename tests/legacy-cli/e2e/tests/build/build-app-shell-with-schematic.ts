@@ -11,14 +11,14 @@ export default async function () {
   await updateJsonFile('package.json', packageJson => {
     const dependencies = packageJson['dependencies'];
     dependencies['@angular/platform-server'] = getGlobalVariable('argv')['ng-snapshots']
-      ? 'github:angular/platform-server-builds'
+      ? require('../../ng-snapshot/package.json').dependencies['@angular/platform-server']
       : readNgVersion();
   });
 
   await silentNpm('install');
   await ng('run', 'test-project:app-shell');
-  await expectFileToMatch('dist/test-project/index.html', /app-shell works!/);
+  await expectFileToMatch('dist/test-project/browser/index.html', /app-shell works!/);
 
   await ng('run', 'test-project:app-shell:production');
-  await expectFileToMatch('dist/test-project/index.html', /app-shell works!/);
+  await expectFileToMatch('dist/test-project/browser/index.html', /app-shell works!/);
 }
