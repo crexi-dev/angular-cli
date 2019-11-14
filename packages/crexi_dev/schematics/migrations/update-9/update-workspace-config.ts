@@ -15,7 +15,7 @@ import {
   removePropertyInAstObject,
 } from '../../utility/json-utils';
 import { Builders } from '../../utility/workspace-models';
-import { getAllOptions, getTargets, getWorkspace, isIvyEnabled } from './utils';
+import { getAllOptions, getProjectTarget, getTargets, getWorkspace, isIvyEnabled } from './utils';
 
 export const ANY_COMPONENT_STYLE_BUDGET = {
   type: 'anyComponentStyle',
@@ -40,10 +40,80 @@ export function updateWorkspaceConfig(): Rule {
       updateStyleOrScriptOption('scripts', recorder, target);
     }
 
+    for (const { target } of getTargets(workspace, 'server', Builders.Server)) {
+      updateOptimizationOption(recorder, target);
+    }
+
     tree.commitUpdate(recorder);
 
     return tree;
   };
+}
+
+function addProjectI18NOptions(recorder: UpdateRecorder, builderConfig: JsonAstObject, projectConfig: JsonAstObject) {
+  const browserConfig = getProjectTarget(projectConfig, 'build', Builders.Browser);
+  if (!browserConfig || browserConfig.kind !== 'object') {
+    return;
+  }
+
+  // browser builder options
+  let locales: Record<string, string> | undefined;
+  const options = getAllOptions(browserConfig);
+  for (const option of options) {
+    const localeId = findPropertyInAstObject(option, 'i18nLocale');
+    if (!localeId || localeId.kind !== 'string') {
+      continue;
+    }
+
+    const localeFile = findPropertyInAstObject(option, 'i18nFile');
+    if (!localeFile || localeFile.kind !== 'string') {
+      continue;
+    }
+
+    const localIdValue = localeId.value;
+    const localeFileValue = localeFile.value;
+
+    if (!locales) {
+      locales = {
+        [localIdValue]: localeFileValue,
+      };
+    } else {
+      locales[localIdValue] = localeFileValue;
+    }
+  }
+
+  if (locales) {
+    // Get sourceLocale from extract-i18n builder
+    const i18nOptions = getAllOptions(builderConfig);
+    const sourceLocale = i18nOptions
+    .map(o => {
+      const sourceLocale = findPropertyInAstObject(o, 'i18nLocale');
+
+      return sourceLocale && sourceLocale.value;
+    })
+    .find(x => !!x);
+
+    // Add i18n project configuration
+    insertPropertyInAstObjectInOrder(recorder, projectConfig, 'i18n', {
+      locales,
+      // tslint:disable-next-line: no-any
+      sourceLocale: sourceLocale as any,
+    }, 6);
+  }
+}
+
+function addBuilderI18NOptions(recorder: UpdateRecorder, builderConfig: JsonAstObject) {
+  const options = getAllOptions(builderConfig);
+
+  for (const option of options) {
+    const localeId = findPropertyInAstObject(option, 'i18nLocale');
+    if (!localeId || localeId.kind !== 'string') {
+      continue;
+    }
+
+    // add new localize option
+    insertPropertyInAstObjectInOrder(recorder, option, 'localize', [localeId.value], 12);
+  }
 }
 
 function updateAotOption(tree: Tree, recorder: UpdateRecorder, builderConfig: JsonAstObject) {
@@ -136,6 +206,25 @@ function addAnyComponentStyleBudget(recorder: UpdateRecorder, builderConfig: Jso
 
     if (!hasAnyComponentStyle) {
       appendValueInAstArray(recorder, budgetOption, ANY_COMPONENT_STYLE_BUDGET, 16);
+    }
+  }
+}
+
+function updateOptimizationOption(recorder: UpdateRecorder, builderConfig: JsonAstObject) {
+  const options = getAllOptions(builderConfig, true);
+
+  for (const option of options) {
+    const optimizationOption = findPropertyInAstObject(option, 'optimization');
+    if (!optimizationOption) {
+      // add
+      insertPropertyInAstObjectInOrder(recorder, option, 'optimization', true, 14);
+      continue;
+    }
+
+    if (optimizationOption.kind !== 'true') {
+      const { start, end } = optimizationOption;
+      recorder.remove(start.offset, end.offset - start.offset);
+      recorder.insertLeft(start.offset, 'true');
     }
   }
 }
