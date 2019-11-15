@@ -61,7 +61,7 @@
     "flat": {
       "type": "boolean",
       "description": "When true (the default), creates the new files at the top level of the current project.",
-      "default": true
+      "default": false
     },
     "module": {
       "type": "string",

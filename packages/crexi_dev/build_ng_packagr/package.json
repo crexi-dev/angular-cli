@@ -1,6 +1,6 @@
 {
   "name": "@crexi-dev/build-ng-packagr",
-  "version": "8.2.0",
+  "version": "0.803.19",
   "description": "Angular Build Architect for ng-packagr",
   "experimental": true,
   "main": "src/index.js",
@@ -8,10 +8,11 @@
   "builders": "builders.json",
   "dependencies": {
     "@angular-devkit/architect": "0.0.0",
-    "rxjs": "6.4.0"
+    "rxjs": "6.5.3"
   },
   "peerDependencies": {
-    "@crexi-dev/ng-packagr": "^4.0.0 || ^5.0.0"
+    "@crexi-dev/ng-packagr": "^4.0.0 || ^5.0.0",
+    "tsickle": "~0.37.1"
   },
   "devDependencies": {
     "@angular/compiler": "~8.2.0",
@@ -19,5 +20,10 @@
     "@angular-devkit/core": "0.0.0",
     "@crexi-dev/ng-packagr": "~5.5.4",
     "tslib": "^1.10.0"
+  },
+  "peerDependenciesMeta": {
+    "tsickle": {
+      "optional": true
+    }
   }
 }

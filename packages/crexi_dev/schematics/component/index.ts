@@ -54,17 +54,15 @@ function addDeclarationToNgModule(options: ComponentOptions): Rule {
     const modulePath = options.module;
     const source = readIntoSourceFile(host, modulePath);
 
-    const componentPath = `/${options.path}/`
-                          + (options.flat ? '' : strings.dasherize(options.name) + '/')
-                          + strings.dasherize(options.name)
-                          + '.'
-                          + strings.dasherize(options.type);
+    const fileExt = `${strings.dasherize(options.name)}.${strings.dasherize(options.type)}`;
+    const componentPath = `/${options.path}/${strings.dasherize(options.name)}`
+                          + (options.flat ? fileExt : '/');
+
     const relativePath = buildRelativePath(modulePath, componentPath);
-    const classifiedName = strings.classify(options.name) + strings.classify(options.type);
-    const declarationChanges = addDeclarationToModule(source,
-                                                      modulePath,
-                                                      classifiedName,
-                                                      relativePath);
+    const classifiedName = strings.classify(options.feature || '') + strings.classify(options.name)
+                          + strings.classify(options.type);
+
+    const declarationChanges = addDeclarationToModule(source, modulePath, classifiedName, relativePath);
 
     const declarationRecorder = host.beginUpdate(modulePath);
     for (const change of declarationChanges) {
@@ -117,10 +115,12 @@ function addDeclarationToNgModule(options: ComponentOptions): Rule {
 
 function buildSelector(options: ComponentOptions, projectPrefix: string) {
   let selector = strings.dasherize(options.name);
-  if (options.prefix) {
-    selector = `${options.prefix}-${selector}`;
-  } else if (options.prefix === undefined && projectPrefix) {
-    selector = `${projectPrefix}-${selector}`;
+  let prefix = options.prefix || projectPrefix || '';
+  if (options.feature) {
+    prefix += `-${strings.dasherize(options.feature)}`;
+  }
+  if (prefix) {
+    selector = `${prefix}-${selector}`;
   }
 
   return selector;

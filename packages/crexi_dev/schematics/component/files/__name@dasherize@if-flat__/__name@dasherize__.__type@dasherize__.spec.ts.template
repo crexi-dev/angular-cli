@@ -1,17 +1,17 @@
 import { async, ComponentFixture, ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { RouterTestingModule } from '@angular/router/testing';
-import { <%= classify(name) %><%= classify(type) %> } from './<%= dasherize(name) %>.<%= dasherize(type) %>';
+import { <%= classify(feature) %><%= classify(name) %><%= classify(type) %> } from './<%= dasherize(name) %>.<%= dasherize(type) %>';
 
-describe('<%= classify(name) %><%= classify(type) %>', () => {
+describe('<%= classify(feature) %><%= classify(name) %><%= classify(type) %>', () => {
 
-    let component: <%= classify(name) %><%= classify(type) %>;
-    let fixture: ComponentFixture<<%= classify(name) %><%= classify(type) %>>;
+    let component: <%= classify(feature) %><%= classify(name) %><%= classify(type) %>;
+    let fixture: ComponentFixture<<%= classify(feature) %><%= classify(name) %><%= classify(type) %>>;
 
     beforeEach(async(() => {
 
         TestBed.configureTestingModule({
             declarations: [
-                <%= classify(name) %><%= classify(type) %>
+                <%= classify(feature) %><%= classify(name) %><%= classify(type) %>
             ],
             imports: [
                 RouterTestingModule
@@ -23,7 +23,7 @@ describe('<%= classify(name) %><%= classify(type) %>', () => {
         .compileComponents()
         .then(() => {
 
-            fixture = TestBed.createComponent(<%= classify(name) %>Component);
+            fixture = TestBed.createComponent(<%= classify(feature) %><%= classify(name) %><%= classify(type) %>);
             component = fixture.componentInstance;
 
         });

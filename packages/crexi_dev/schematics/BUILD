@@ -46,7 +46,7 @@ ts_library(
             "utility/test/**/*.ts",
         ],
     ),
-    module_name = "@schematics/angular",
+    module_name = "@crexi-dev/schematics",
     # strict_checks = False,
     deps = ALL_SCHEMA_DEPS + [
         "//packages/angular_devkit/core",

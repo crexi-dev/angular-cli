@@ -1,11 +1,11 @@
-import { Component, OnInit<% if(!!viewEncapsulation) { %>, ViewEncapsulation<% }%><% if(changeDetection !== 'Default') { %>, ChangeDetectionStrategy<% }%> } from '@angular/core';
+import { Component, OnInit<% if (!!viewEncapsulation) { %>, ViewEncapsulation<% } %><% if (changeDetection !== 'Default') { %>, ChangeDetectionStrategy<% } %> } from '@angular/core';
 
 @Component({<% if (changeDetection !== 'Default') { %>
-    changeDetection: ChangeDetectionStrategy.<%= changeDetection %>,<% } if(!!viewEncapsulation) { %>
-    encapsulation: ViewEncapsulation.<%= viewEncapsulation %>,<% } if(!skipSelector) { %>
-    selector: '<%= selector %>',<% if(inlineStyle) { %>
+    changeDetection: ChangeDetectionStrategy.<%= changeDetection %>,<% } if (!!viewEncapsulation) { %>
+    encapsulation: ViewEncapsulation.<%= viewEncapsulation %>,<% } if (!skipSelector) { %>
+    selector: '<%= selector %>',<% } if (inlineStyle) { %>
     styles: [],<% } else { %>
-    styleUrls: ['./<%= dasherize(name) %>.<%= style %>'],<% } if(inlineTemplate) { %>
+    styleUrls: ['./<%= dasherize(name) %>.<%= style %>'],<% } if (inlineTemplate) { %>
     template: `
         <p>
             <%= dasherize(name) %> works!
@@ -13,7 +13,7 @@ import { Component, OnInit<% if(!!viewEncapsulation) { %>, ViewEncapsulation<% }
     `<% } else { %>
     templateUrl: './<%= dasherize(name) %>.pug'<% } %>
 })
-export class <%= classify(name) %><%= classify(type) %> implements OnInit {
+export class <%= classify(feature) %><%= classify(name) %><%= classify(type) %> implements OnInit {
 
     constructor () {
 

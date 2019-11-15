@@ -136,6 +136,11 @@
       "default": false,
       "description": "When true, applies lint fixes after generating the component.",
       "x-user-analytics": 15
+    },
+    "feature": {
+        "type": "string",
+        "default": "",
+        "description": "Feature prefix to add to component and selector name"
     }
   },
   "required": [
