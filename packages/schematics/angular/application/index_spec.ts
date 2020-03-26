@@ -184,6 +184,19 @@ describe('Application Schematic', () => {
     expect(architect.e2e).not.toBeDefined();
   });
 
+  it('minimal=true should configure the schematics options for components', async () => {
+    const options = { ...defaultOptions, minimal: true };
+    const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
+      .toPromise();
+    const config = JSON.parse(tree.readContent('/angular.json'));
+    const schematics = config.projects.foo.schematics;
+    expect(schematics['@schematics/angular:component']).toEqual({
+      inlineTemplate: true,
+      inlineStyle: true,
+      skipTests: true,
+    });
+  });
+
   it('should create correct files when using minimal', async () => {
     const options = { ...defaultOptions, minimal: true };
     const tree = await schematicRunner.runSchematicAsync('application', options, workspaceTree)
@@ -365,7 +378,7 @@ describe('Application Schematic', () => {
       const content = JSON.parse(tree.readContent('/tslint.json'));
       expect(content.extends).toMatch('tslint:recommended');
       expect(content.rules['component-selector'][2]).toMatch('app');
-      expect(content.rules['trailing-comma']).toBeDefined();
+      expect(content.rules['no-console']).toBeDefined();
     });
 
     it(`should create correct paths when 'newProjectRoot' is blank`, async () => {

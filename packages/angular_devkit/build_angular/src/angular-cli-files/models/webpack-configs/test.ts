@@ -12,15 +12,6 @@ import * as webpack from 'webpack';
 import { WebpackConfigOptions, WebpackTestOptions } from '../build-options';
 import { getSourceMapDevTool, isPolyfillsEntry } from './utils';
 
-
-/**
- * Enumerate loaders and their dependencies from this file to let the dependency validator
- * know they are used.
- *
- * require('istanbul-instrumenter-loader')
- *
- */
-
 export function getTestConfig(
   wco: WebpackConfigOptions<WebpackTestOptions>,
 ): webpack.Configuration {
@@ -29,7 +20,6 @@ export function getTestConfig(
   const extraRules: webpack.Rule[] = [];
   const extraPlugins: webpack.Plugin[] = [];
 
-  // if (buildOptions.codeCoverage && CliConfig.fromProject()) {
   if (buildOptions.codeCoverage) {
     const codeCoverageExclude = buildOptions.codeCoverageExclude;
     const exclude: (string | RegExp)[] = [
@@ -48,7 +38,7 @@ export function getTestConfig(
 
     extraRules.push({
       test: /\.(jsx?|tsx?)$/,
-      loader: 'istanbul-instrumenter-loader',
+      loader: require.resolve('@jsdevtools/coverage-istanbul-loader'),
       options: { esModules: true },
       enforce: 'post',
       exclude,
@@ -59,12 +49,14 @@ export function getTestConfig(
   if (wco.buildOptions.sourceMap) {
     const { styles, scripts } = wco.buildOptions.sourceMap;
 
-    extraPlugins.push(getSourceMapDevTool(
-      scripts || false,
-      styles || false,
-      false,
-      true,
-    ));
+    if (styles || scripts) {
+      extraPlugins.push(getSourceMapDevTool(
+        scripts,
+        styles,
+        false,
+        true,
+      ));
+    }
   }
 
   return {

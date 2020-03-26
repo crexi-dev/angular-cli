@@ -9,6 +9,7 @@
 import * as path from 'path';
 import * as webpack from 'webpack';
 import {
+  AnyComponentStyleBudgetChecker,
   PostcssCliResources,
   RawCssLoader,
   RemoveHashPlugin,
@@ -21,25 +22,14 @@ const autoprefixer = require('autoprefixer');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const postcssImports = require('postcss-import');
 
-/**
- * Enumerate loaders and their dependencies from this file to let the dependency validator
- * know they are used.
- *
- * require('style-loader')
- * require('postcss-loader')
- * require('stylus')
- * require('stylus-loader')
- * require('less')
- * require('less-loader')
- * require('node-sass')
- * require('sass-loader')
- */
 // tslint:disable-next-line:no-big-function
 export function getStylesConfig(wco: WebpackConfigOptions) {
   const { root, buildOptions } = wco;
   const entryPoints: { [key: string]: string[] } = {};
   const globalStylePaths: string[] = [];
-  const extraPlugins = [];
+  const extraPlugins: webpack.Plugin[] = [
+    new AnyComponentStyleBudgetChecker(buildOptions.budgets),
+  ];
 
   const cssSourceMap = buildOptions.sourceMap.styles;
 
@@ -138,7 +128,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
       test: /\.scss$|\.sass$/,
       use: [
         {
-          loader: 'sass-loader',
+          loader: require.resolve('sass-loader'),
           options: {
             implementation: sassImplementation,
             sourceMap: cssSourceMap,
@@ -146,6 +136,11 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
               // bootstrap-sass requires a minimum precision of 8
               precision: 8,
               includePaths,
+              // Use expanded as otherwise sass will remove comments that are needed for autoprefixer
+              // Ex: /* autoprefixer grid: autoplace */
+              // tslint:disable-next-line: max-line-length
+              // See: https://github.com/webpack-contrib/sass-loader/blob/45ad0be17264ceada5f0b4fb87e9357abe85c4ff/src/getSassOptions.js#L68-L70
+              outputStyle: 'expanded',
             },
           },
         },
@@ -155,7 +150,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
       test: /\.less$/,
       use: [
         {
-          loader: 'less-loader',
+          loader: require.resolve('less-loader'),
           options: {
             sourceMap: cssSourceMap,
             javascriptEnabled: true,
@@ -168,7 +163,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
       test: /\.styl$/,
       use: [
         {
-          loader: 'stylus-loader',
+          loader: require.resolve('stylus-loader'),
           options: {
             sourceMap: cssSourceMap,
             paths: includePaths,
@@ -183,9 +178,9 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
     exclude: globalStylePaths,
     test,
     use: [
-      { loader: 'raw-loader' },
+      { loader: require.resolve('raw-loader') },
       {
-        loader: 'postcss-loader',
+        loader: require.resolve('postcss-loader'),
         options: {
           ident: 'embedded',
           plugins: postcssPluginCreator,
@@ -210,10 +205,10 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
           include: globalStylePaths,
           test,
           use: [
-            buildOptions.extractCss ? MiniCssExtractPlugin.loader : 'style-loader',
+            buildOptions.extractCss ? MiniCssExtractPlugin.loader : require.resolve('style-loader'),
             RawCssLoader,
             {
-              loader: 'postcss-loader',
+              loader: require.resolve('postcss-loader'),
               options: {
                 ident: buildOptions.extractCss ? 'extracted' : 'embedded',
                 plugins: postcssPluginCreator,

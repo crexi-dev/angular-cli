@@ -25,12 +25,13 @@ var_3: &default_nodeversion "12.9"
 # https://circleci.com/docs/2.0/workflows/#using-workspaces-to-share-data-among-jobs
 # https://circleci.com/blog/deep-diving-into-circleci-workspaces/
 var_4: &workspace_location .
-# Filter to ignore pull requests on a given job.
-var_5: &ignore_pull_requests
+# Filter to only release branches on a given job.
+var_5: &only_release_branches
   filters:
     branches:
-      ignore:
-        - /pull\/.*/
+      only:
+        - master
+        - /\d+\.\d+\.x/
 
 # Executor Definitions
 # https://circleci.com/docs/2.0/reusing-config/#authoring-reusable-executors
@@ -43,6 +44,7 @@ executors:
     docker:
       - image: circleci/node:<< parameters.nodeversion >>
     working_directory: ~/ng
+    resource_class: small
 
   test-executor:
     parameters:
@@ -54,14 +56,17 @@ executors:
     working_directory: ~/ng
     environment:
       NPM_CONFIG_PREFIX: ~/.npm-global
-    resource_class: xlarge
+    resource_class: large
 
   windows-executor:
+    # Same as https://circleci.com/orbs/registry/orb/circleci/windows, but named.
     working_directory: ~/ng
     resource_class: windows.medium
     shell: powershell.exe -ExecutionPolicy Bypass
     machine:
-      image: windows-server-2019
+      # Contents of this image:
+      # https://circleci.com/docs/2.0/hello-world-windows/#software-pre-installed-in-the-windows-image
+      image: windows-server-2019-vs2019:stable
 
 # Command Definitions
 # https://circleci.com/docs/2.0/reusing-config/#authoring-reusable-commands
@@ -72,11 +77,10 @@ commands:
       - attach_workspace:
           at: *workspace_location
   setup_windows:
-    steps:     
-      - run:
-          # Need to install node and yarn before to ensure correct versions.
-          name: Setup windows node environment
-          command: ./.circleci/windows-env.ps1             
+    steps:
+      - run: nvm install 12.1.0
+      - run: nvm use 12.1.0
+      - run: npm install -g yarn@1.17.3
       - run: node --version
       - run: yarn --version
 
@@ -111,6 +115,7 @@ commands:
 jobs:
   setup:
     executor: action-executor
+    resource_class: medium
     steps:
       - checkout
       - run:
@@ -171,7 +176,6 @@ jobs:
         type: string
         default: ""
     executor: test-executor
-    resource_class: large
     parallelism: 4
     steps:
       - custom_attach_workspace
@@ -187,7 +191,7 @@ jobs:
         type: boolean
         default: false
     executor: test-executor
-    parallelism: 4
+    parallelism: 6
     steps:
       - custom_attach_workspace
       - run:
@@ -217,6 +221,7 @@ jobs:
       name: test-executor
     environment:
       E2E_BROWSERS: true
+    resource_class: medium
     steps:
       - custom_attach_workspace
       - run:
@@ -250,12 +255,12 @@ jobs:
     steps:
       - custom_attach_workspace
       - run: yarn webdriver-update
-      - run: yarn test-large --full --flakey
       - run: yarn test-large --full --flakey --ve
+      - run: yarn test-large --full --flakey
 
   build-bazel:
     executor: action-executor
-    resource_class: xlarge
+    resource_class: large
     steps:
       - custom_attach_workspace
       - setup_bazel_rbe
@@ -264,6 +269,7 @@ jobs:
 
   snapshot_publish:
     executor: action-executor
+    resource_class: medium
     steps:
       - custom_attach_workspace
       - run:
@@ -298,7 +304,7 @@ jobs:
     executor: windows-executor
     steps:
       - custom_attach_workspace
-      - setup_windows              
+      - setup_windows
       - restore_cache:
           keys:
             - *cache_key_win
@@ -315,7 +321,7 @@ jobs:
       - persist_to_workspace:
           root: *workspace_location
           paths:
-            - ./*            
+            - ./*
 
   test-win:
     executor: windows-executor
@@ -385,30 +391,24 @@ workflows:
           snapshots: true
           requires:
             - e2e-cli
-          pre-steps:
-            - run:
-                name: Don't run expensive e2e snapshots tests for forks other than renovate-bot and angular
-                command: >
-                  if [[ "$CIRCLE_PR_USERNAME" != "renovate-bot" ]] &&
-                    [[ "$CIRCLE_PROJECT_USERNAME" != "angular" || $CIRCLE_BRANCH != "master" ]]; then
-                    circleci step halt
-                  fi
+          filters:
+            branches:
+              only:
+                - renovate/angular
+                - master
       - e2e-cli:
           name: e2e-cli-ng-ve-snapshots
           snapshots: true
           ve: true
           requires:
             - e2e-cli
-          pre-steps:
-            - run:
-                name: Don't run expensive e2e snapshots tests for forks other than renovate-bot and angular
-                command: >
-                  if [[ "$CIRCLE_PR_USERNAME" != "renovate-bot" ]] &&
-                    [[ "$CIRCLE_PROJECT_USERNAME" != "angular" || $CIRCLE_BRANCH != "master" ]]; then
-                    circleci step halt
-                  fi
+          filters:
+            branches:
+              only:
+                - renovate/angular
+                - master
       - e2e-cli-node-10:
-          <<: *ignore_pull_requests
+          <<: *only_release_branches
           requires:
             - e2e-cli
       - test-browsers:
@@ -416,7 +416,7 @@ workflows:
             - build
       - flake-jail:
           requires:
-            - build            
+            - build
       
       # Windows jobs
       # These jobs only run after their non-windows counterparts finish successfully.
@@ -432,14 +432,14 @@ workflows:
             - setup-and-build-win
             - test
       - e2e-cli-win:
-          <<: *ignore_pull_requests
+          <<: *only_release_branches
           requires:
             - setup-and-build-win
             - e2e-cli
       
       # Publish jobs
       - snapshot_publish:
-          <<: *ignore_pull_requests
+          <<: *only_release_branches
           requires:
             - test
             - build

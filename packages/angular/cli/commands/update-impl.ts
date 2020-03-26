@@ -18,6 +18,7 @@ import { Command } from '../models/command';
 import { Arguments } from '../models/interface';
 import { runTempPackageBin } from '../tasks/install-package';
 import { colors } from '../utilities/color';
+import { writeErrorToLogFile } from '../utilities/log-file';
 import { getPackageManager } from '../utilities/package-manager';
 import {
   PackageIdentifier,
@@ -41,6 +42,16 @@ const NG_VERSION_9_POST_MSG = colors.cyan(
   '\nYour project has been updated to Angular version 9!\n' +
   'For more info, please see: https://v9.angular.io/guide/updating-to-version-9',
 );
+
+/**
+ * Disable CLI version mismatch checks and forces usage of the invoked CLI
+ * instead of invoking the local installed version.
+ */
+const disableVersionCheckEnv = process.env['NG_DISABLE_VERSION_CHECK'];
+const disableVersionCheck =
+  disableVersionCheckEnv !== undefined &&
+  disableVersionCheckEnv !== '0' &&
+  disableVersionCheckEnv.toLowerCase() !== 'false';
 
 export class UpdateCommand extends Command<UpdateCommandSchema> {
   public readonly allowMissingWorkspace = true;
@@ -97,7 +108,8 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
           files.add(eventPath);
           break;
         case 'rename':
-          logs.push(`${colors.blue('RENAME')} ${eventPath} => ${event.to}`);
+          const eventToPath = event.to.startsWith('/') ? event.to.substr(1) : event.to;
+          logs.push(`${colors.blue('RENAME')} ${eventPath} => ${eventToPath}`);
           files.add(eventPath);
           break;
       }
@@ -130,13 +142,43 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
       return { success: !error, files };
     } catch (e) {
       if (e instanceof UnsuccessfulWorkflowExecution) {
-        this.logger.error('The update failed. See above.');
+        this.logger.error(`${colors.symbols.cross} Migration failed. See above for further details.\n`);
       } else {
-        this.logger.fatal(e.message);
+        const logPath = writeErrorToLogFile(e);
+        this.logger.fatal(
+          `${colors.symbols.cross} Migration failed: ${e.message}\n` +
+          `  See "${logPath}" for further details.\n`,
+        );
       }
 
       return { success: false, files };
     }
+  }
+
+  /**
+   * @return Whether or not the migration was performed successfully.
+   */
+  private async executeMigration(
+    packageName: string,
+    collectionPath: string,
+    migrationName: string,
+    commit?: boolean,
+  ): Promise<boolean> {
+    const collection = this.workflow.engine.createCollection(collectionPath);
+    const name = collection.listSchematicNames().find(name => name === migrationName);
+    if (!name) {
+      this.logger.error(`Cannot find migration '${migrationName}' in '${packageName}'.`);
+
+      return false;
+    }
+
+    const schematic = this.workflow.engine.createSchematic(name, collection);
+
+    this.logger.info(
+      colors.cyan(`** Executing '${migrationName}' of package '${packageName}' **\n`),
+    );
+
+    return this.executePackageMigrations([schematic.description], packageName, commit);
   }
 
   /**
@@ -146,11 +188,11 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
     packageName: string,
     collectionPath: string,
     range: semver.Range,
-    commit = false,
+    commit?: boolean,
   ): Promise<boolean> {
     const collection = this.workflow.engine.createCollection(collectionPath);
-
     const migrations = [];
+
     for (const name of collection.listSchematicNames()) {
       const schematic = this.workflow.engine.createSchematic(name, collection);
       const description = schematic.description as typeof schematic.description & {
@@ -166,23 +208,26 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
       }
     }
 
+    migrations.sort((a, b) => semver.compare(a.version, b.version) || a.name.localeCompare(b.name));
+
     if (migrations.length === 0) {
       return true;
     }
-
-    migrations.sort((a, b) => semver.compare(a.version, b.version) || a.name.localeCompare(b.name));
 
     this.logger.info(
       colors.cyan(`** Executing migrations of package '${packageName}' **\n`),
     );
 
+    return this.executePackageMigrations(migrations, packageName, commit);
+  }
+
+  // tslint:disable-next-line: no-any
+  private async executePackageMigrations(migrations: any[], packageName: string, commit = false): Promise<boolean> {
     for (const migration of migrations) {
       this.logger.info(`${colors.symbols.pointer} ${migration.description.replace(/\. /g, '.\n  ')}`);
 
       const result = await this.executeSchematic(migration.collection.name, migration.name);
       if (!result.success) {
-        this.logger.error(`${colors.symbols.cross} Migration failed. See above for further details.\n`);
-
         return false;
       }
 
@@ -209,10 +254,32 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
 
   // tslint:disable-next-line:no-big-function
   async run(options: UpdateCommandSchema & Arguments) {
+    // Check if the @angular-devkit/schematics package can be resolved from the workspace root
+    // This works around issues with packages containing migrations that cannot directly depend on the package
+    // This check can be removed once the schematic runtime handles this situation
+    try {
+      require.resolve('@angular-devkit/schematics', { paths: [this.workspace.root] });
+    } catch (e) {
+      if (e.code === 'MODULE_NOT_FOUND') {
+        this.logger.fatal(
+          'The "@angular-devkit/schematics" package cannot be resolved from the workspace root directory. ' +
+            'This may be due to an unsupported node modules structure.\n' +
+            'Please remove both the "node_modules" directory and the package lock file; and then reinstall.\n' +
+            'If this does not correct the problem, ' +
+            'please temporarily install the "@angular-devkit/schematics" package within the workspace. ' +
+            'It can be removed once the update is complete.',
+        );
+
+        return 1;
+      }
+
+      throw e;
+    }
+
     // Check if the current installed CLI version is older than the latest version.
-    if (await this.checkCLILatestVersion(options.verbose, options.next)) {
+    if (!disableVersionCheck && await this.checkCLILatestVersion(options.verbose, options.next)) {
       this.logger.warn(
-        `The installed Angular CLI version is older than the latest ${options.next ? 'pre-release' : 'stable'} version.\n` +
+        `The installed local Angular CLI version is older than the latest ${options.next ? 'pre-release' : 'stable'} version.\n` +
         'Installing a temporary version to perform the update.',
       );
 
@@ -240,6 +307,10 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
           this.logger.error(`Duplicate package '${packageIdentifier.name}' specified.`);
 
           return 1;
+        }
+
+        if (options.migrateOnly && packageIdentifier.rawSpec) {
+          this.logger.warn('Package specifier has no effect when using "migrate-only" option.');
         }
 
         // If next option is used and no specifier supplied, use next tag
@@ -334,21 +405,14 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
     }
 
     if (options.migrateOnly) {
-      if (!options.from) {
-        this.logger.error('"from" option is required when using the "migrate-only" option.');
+      if (!options.from && typeof options.migrateOnly !== 'string') {
+        this.logger.error('"from" option is required when using the "migrate-only" option without a migration name.');
 
         return 1;
       } else if (packages.length !== 1) {
         this.logger.error(
           'A single package must be specified when using the "migrate-only" option.',
         );
-
-        return 1;
-      }
-
-      const from = coerceVersionNumber(options.from);
-      if (!from) {
-        this.logger.error(`"from" value [${options.from}] is not a valid version.`);
 
         return 1;
       }
@@ -430,20 +494,39 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
         }
       }
 
-      const migrationRange = new semver.Range(
-        '>' + from + ' <=' + (options.to || packageNode.package.version),
-      );
+      let success = false;
+      if (typeof options.migrateOnly == 'string') {
+        success = await this.executeMigration(
+          packageName,
+          migrations,
+          options.migrateOnly,
+          options.createCommits,
+        );
+      } else {
+        const from = coerceVersionNumber(options.from);
+        if (!from) {
+          this.logger.error(`"from" value [${options.from}] is not a valid version.`);
 
-      const success = await this.executeMigrations(
-        packageName,
-        migrations,
-        migrationRange,
-        options.createCommits,
-      );
+          return 1;
+        }
+
+        const migrationRange = new semver.Range(
+          '>' + from + ' <=' + (options.to || packageNode.package.version),
+        );
+
+        success = await this.executeMigrations(
+          packageName,
+          migrations,
+          migrationRange,
+          options.createCommits,
+        );
+      }
 
       if (success) {
         if (
           packageName === '@angular/core'
+          && options.from
+          && +options.from.split('.')[0] < 9
           && (options.to || packageNode.package.version).split('.')[0] === '9'
         ) {
           this.logger.info(NG_VERSION_9_POST_MSG);
@@ -594,7 +677,7 @@ export class UpdateCommand extends Command<UpdateCommandSchema> {
         }
       }
 
-      if (migrations.some(m => m.package === '@angular/core' && m.to.split('.')[0] === '9')) {
+      if (migrations.some(m => m.package === '@angular/core' && m.to.split('.')[0] === '9' && +m.from.split('.')[0] < 9)) {
         this.logger.info(NG_VERSION_9_POST_MSG);
       }
     }

@@ -10,10 +10,10 @@
 
 import { logging } from '@angular-devkit/core';
 import { ParsedConfiguration } from '@angular/compiler-cli';
-import { ScriptTarget } from 'typescript';
 import {
   AssetPatternClass,
   Budget,
+  CrossOrigin,
   ExtraEntryPoint,
   I18NMissingTranslation,
   Localize,
@@ -48,7 +48,8 @@ export interface BuildOptions {
   localize?: Localize;
   i18nMissingTranslation?: I18NMissingTranslation;
   extractCss?: boolean;
-  bundleDependencies?: 'none' | 'all';
+  bundleDependencies?: boolean;
+  externalDependencies?: string[];
   watch?: boolean;
   outputHashing?: string;
   poll?: number;
@@ -58,6 +59,7 @@ export interface BuildOptions {
   showCircularDependencies?: boolean;
   buildOptimizer?: boolean;
   namedChunks?: boolean;
+  crossOrigin?: CrossOrigin;
   subresourceIntegrity?: boolean;
   serviceWorker?: boolean;
   webWorkerTsConfig?: string;
@@ -85,8 +87,8 @@ export interface BuildOptions {
 
   /* Append script target version to filename. */
   esVersionInFileName?: boolean;
-
   experimentalRollupPass?: boolean;
+  allowedCommonJsDependencies?: string[];
 }
 
 export interface WebpackTestOptions extends BuildOptions {

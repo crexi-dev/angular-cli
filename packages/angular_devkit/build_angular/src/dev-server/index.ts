@@ -31,6 +31,8 @@ import { buildBrowserWebpackConfigFromContext, createBrowserLoggingCallback } fr
 import { Schema as BrowserBuilderSchema } from '../browser/schema';
 import { ExecutionTransformer } from '../transforms';
 import { BuildBrowserFeatures, normalizeOptimization } from '../utils';
+import { findCachePath } from '../utils/cache-path';
+import { I18nOptions } from '../utils/i18n-options';
 import { assertCompatibleAngularVersion } from '../utils/version';
 import { getIndexInputFile, getIndexOutputFile } from '../utils/webpack-browser-config';
 import { Schema } from './schema';
@@ -65,25 +67,27 @@ async function createI18nPlugins(
 
   const diagnostics = new localizeDiag.Diagnostics();
 
-  if (translation) {
-    const es2015 = await import(
-      // tslint:disable-next-line: trailing-comma no-implicit-dependencies
-      '@angular/localize/src/tools/src/translate/source_files/es2015_translate_plugin'
-    );
-    plugins.push(
-      // tslint:disable-next-line: no-any
-      es2015.makeEs2015TranslatePlugin(diagnostics, translation as any, { missingTranslation }),
-    );
+  const es2015 = await import(
+    // tslint:disable-next-line: trailing-comma no-implicit-dependencies
+    '@angular/localize/src/tools/src/translate/source_files/es2015_translate_plugin'
+  );
+  plugins.push(
+    // tslint:disable-next-line: no-any
+    es2015.makeEs2015TranslatePlugin(diagnostics, (translation || {}) as any, {
+      missingTranslation: translation === undefined ? 'ignore' : missingTranslation,
+    }),
+  );
 
-    const es5 = await import(
-      // tslint:disable-next-line: trailing-comma no-implicit-dependencies
-      '@angular/localize/src/tools/src/translate/source_files/es5_translate_plugin'
-    );
-    plugins.push(
-      // tslint:disable-next-line: no-any
-      es5.makeEs5TranslatePlugin(diagnostics, translation as any, { missingTranslation }),
-    );
-  }
+  const es5 = await import(
+    // tslint:disable-next-line: trailing-comma no-implicit-dependencies
+    '@angular/localize/src/tools/src/translate/source_files/es5_translate_plugin'
+  );
+  plugins.push(
+    // tslint:disable-next-line: no-any
+    es5.makeEs5TranslatePlugin(diagnostics, (translation || {}) as any, {
+      missingTranslation: translation === undefined ? 'ignore' : missingTranslation,
+    }),
+  );
 
   const inlineLocale = await import(
     // tslint:disable-next-line: trailing-comma no-implicit-dependencies
@@ -172,66 +176,7 @@ export function serveWebpackBrowser(
         );
       }
 
-      const locale = [...i18n.inlineLocales][0];
-      const translation = i18n.locales[locale] && i18n.locales[locale].translation;
-
-      const { plugins, diagnostics } = await createI18nPlugins(
-        locale,
-        translation,
-        browserOptions.i18nMissingTranslation,
-      );
-
-      // Get the insertion point for the i18n babel loader rule
-      // This is currently dependent on the rule order/construction in common.ts
-      // A future refactor of the webpack configuration definition will improve this situation
-      // tslint:disable-next-line: no-non-null-assertion
-      const rules = webpackConfig.module!.rules;
-      const index = rules.findIndex(r => r.enforce === 'pre');
-      if (index === -1) {
-        throw new Error('Invalid internal webpack configuration');
-      }
-
-      const i18nRule: webpack.Rule = {
-        test: /\.(?:m?js|ts)$/,
-        enforce: 'post',
-        use: [
-          {
-            loader: 'babel-loader',
-            options: {
-              babelrc: false,
-              compact: false,
-              cacheCompression: false,
-              plugins,
-            },
-          },
-        ],
-      };
-
-      rules.splice(index, 0, i18nRule);
-
-      // Add a plugin to inject the i18n diagnostics
-      // tslint:disable-next-line: no-non-null-assertion
-      webpackConfig.plugins!.push({
-        // tslint:disable-next-line:no-any
-        apply: (compiler: webpack.Compiler) => {
-          compiler.hooks.thisCompilation.tap('build-angular', compilation => {
-            compilation.hooks.finishModules.tap('build-angular', () => {
-              if (!diagnostics) {
-                return;
-              }
-              for (const diagnostic of diagnostics.messages) {
-                if (diagnostic.type === 'error') {
-                  compilation.errors.push(diagnostic.message);
-                } else {
-                  compilation.warnings.push(diagnostic.message);
-                }
-              }
-
-              diagnostics.messages.length = 0;
-            });
-          });
-        },
-      });
+      await setupLocalize(i18n, browserOptions, webpackConfig);
     }
 
     const port = await checkPort(options.port || 0, options.host || 'localhost', 4200);
@@ -332,7 +277,15 @@ export function serveWebpackBrowser(
         `);
       }
 
-      return runWebpackDevServer(webpackConfig, context, { logging: loggingFn }).pipe(
+      return runWebpackDevServer(
+        webpackConfig,
+        context,
+        {
+          logging: loggingFn,
+          webpackFactory: require('webpack') as typeof webpack,
+          webpackDevServerFactory: require('webpack-dev-server') as typeof WebpackDevServer,
+        },
+      ).pipe(
         map(buildEvent => {
           // Resolve serve address.
           const serverAddress = url.format({
@@ -365,6 +318,95 @@ export function serveWebpackBrowser(
       );
     }),
   );
+}
+
+async function setupLocalize(
+  i18n: I18nOptions,
+  browserOptions: BrowserBuilderSchema,
+  webpackConfig: webpack.Configuration,
+) {
+  const locale = [...i18n.inlineLocales][0];
+  const localeDescription = i18n.locales[locale];
+  const { plugins, diagnostics } = await createI18nPlugins(
+    locale,
+    localeDescription && localeDescription.translation,
+    browserOptions.i18nMissingTranslation,
+  );
+
+  // Modify main entrypoint to include locale data
+  if (
+    localeDescription &&
+    localeDescription.dataPath &&
+    typeof webpackConfig.entry === 'object' &&
+    !Array.isArray(webpackConfig.entry) &&
+    webpackConfig.entry['main']
+  ) {
+    if (Array.isArray(webpackConfig.entry['main'])) {
+      webpackConfig.entry['main'].unshift(localeDescription.dataPath);
+    } else {
+      webpackConfig.entry['main'] = [localeDescription.dataPath, webpackConfig.entry['main']];
+    }
+  }
+
+  // Get the insertion point for the i18n babel loader rule
+  // This is currently dependent on the rule order/construction in common.ts
+  // A future refactor of the webpack configuration definition will improve this situation
+  // tslint:disable-next-line: no-non-null-assertion
+  const rules = webpackConfig.module!.rules;
+  const index = rules.findIndex(r => r.enforce === 'pre');
+  if (index === -1) {
+    throw new Error('Invalid internal webpack configuration');
+  }
+
+  const i18nRule: webpack.Rule = {
+    test: /\.(?:m?js|ts)$/,
+    enforce: 'post',
+    use: [
+      {
+        loader: require.resolve('babel-loader'),
+        options: {
+          babelrc: false,
+          configFile: false,
+          compact: false,
+          cacheCompression: false,
+          cacheDirectory: findCachePath('babel-loader'),
+          cacheIdentifier: JSON.stringify({
+            buildAngular: require('../../package.json').version,
+            locale,
+            translationIntegrity: localeDescription && localeDescription.integrity,
+          }),
+          plugins,
+          parserOpts: {
+            plugins: ['dynamicImport'],
+          },
+        },
+      },
+    ],
+  };
+
+  rules.splice(index, 0, i18nRule);
+
+  // Add a plugin to inject the i18n diagnostics
+  // tslint:disable-next-line: no-non-null-assertion
+  webpackConfig.plugins!.push({
+    apply: (compiler: webpack.Compiler) => {
+      compiler.hooks.thisCompilation.tap('build-angular', compilation => {
+        compilation.hooks.finishModules.tap('build-angular', () => {
+          if (!diagnostics) {
+            return;
+          }
+          for (const diagnostic of diagnostics.messages) {
+            if (diagnostic.type === 'error') {
+              compilation.errors.push(diagnostic.message);
+            } else {
+              compilation.warnings.push(diagnostic.message);
+            }
+          }
+          diagnostics.messages.length = 0;
+        });
+      });
+    },
+  });
 }
 
 /**
@@ -409,7 +451,7 @@ export function buildServerConfig(
   const servePath = buildServePath(serverOptions, browserOptions, logger);
   const { styles, scripts } = normalizeOptimization(browserOptions.optimization);
 
-  const config: WebpackDevServer.Configuration & { logLevel: string} = {
+  const config: WebpackDevServer.Configuration & { logLevel: string } = {
     host: serverOptions.host,
     port: serverOptions.port,
     headers: { 'Access-Control-Allow-Origin': '*' },
@@ -509,19 +551,39 @@ function _addLiveReload(
     webpackConfig.plugins = [];
   }
 
-  // Enable the internal node plugins but no individual shims
-  // This is needed to allow module specific rules to include node shims
+  // Workaround node shim hoisting issues with live reload client
   // Only needed in dev server mode to support live reload capabilities in all package managers
-  if (webpackConfig.node === false) {
-    webpackConfig.node = {
-      global: false,
-      process: false,
-      __filename: false,
-      __dirname: false,
-      Buffer: false,
-      setImmediate: false,
-    };
+  const webpackPath = path.dirname(require.resolve('webpack/package.json'));
+  const nodeLibsBrowserPath = require.resolve('node-libs-browser', { paths: [webpackPath] });
+  const nodeLibsBrowser = require(nodeLibsBrowserPath);
+  webpackConfig.plugins.push(
+    new webpack.NormalModuleReplacementPlugin(
+      /^events|url|querystring$/,
+      (resource: { issuer?: string; request: string }) => {
+        if (!resource.issuer) {
+          return;
+        }
+        if (/[\/\\]hot[\/\\]emitter\.js$/.test(resource.issuer)) {
+          if (resource.request === 'events') {
+            resource.request = nodeLibsBrowser.events;
+          }
+        } else if (
+          /[\/\\]webpack-dev-server[\/\\]client[\/\\]utils[\/\\]createSocketUrl\.js$/.test(
+            resource.issuer,
+          )
+        ) {
+          switch (resource.request) {
+            case 'url':
+              resource.request = nodeLibsBrowser.url;
+              break;
+            case 'querystring':
+              resource.request = nodeLibsBrowser.querystring;
+              break;
+          }
   }
+      },
+    ),
+  );
 
   // This allows for live reload of page when changes are made to repo.
   // https://webpack.js.org/configuration/dev-server/#devserver-inline
@@ -538,10 +600,6 @@ function _addLiveReload(
   if (clientAddress.pathname) {
     clientAddress.pathname = path.posix.join(clientAddress.pathname, 'sockjs-node');
     sockjsPath = '&sockPath=' + clientAddress.pathname;
-    // ensure webpack-dev-server uses the correct path to connect to the reloading socket
-    if (webpackConfig.devServer) {
-      webpackConfig.devServer.sockPath = clientAddress.pathname;
-    }
   }
 
   const entryPoints = [`${webpackDevServerPath}?${url.format(clientAddress)}${sockjsPath}`];

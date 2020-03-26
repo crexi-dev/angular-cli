@@ -39,6 +39,7 @@ export function generateBundleStats(
   const g = (x: string) => (colors ? bold(green(x)) : x);
   const y = (x: string) => (colors ? bold(yellow(x)) : x);
 
+  const id = info.id ? y(info.id.toString()) : '';
   const size = typeof info.size === 'number' ? ` ${formatSize(info.size)}` : '';
   const files = info.files.map(f => path.basename(f)).join(', ');
   const names = info.names ? ` (${info.names.join(', ')})` : '';
@@ -47,7 +48,7 @@ export function generateBundleStats(
     .map(f => (f && (info as any)[f] ? g(` [${f}]`) : ''))
     .join('');
 
-  return `chunk {${y(info.id.toString())}} ${g(files)}${names}${size} ${initial}${flags}`;
+  return `chunk {${id}} ${g(files)}${names}${size} ${initial}${flags}`;
 }
 
 export function generateBuildStats(hash: string, time: number, colors: boolean): string {
@@ -63,8 +64,9 @@ export function statsToString(json: any, statsConfig: any) {
   const changedChunksStats = json.chunks
     .filter((chunk: any) => chunk.rendered)
     .map((chunk: any) => {
-      const asset = json.assets.filter((x: any) => x.name == chunk.files[0])[0];
-      return generateBundleStats({ ...chunk, size: asset && asset.size }, colors);
+      const assets = json.assets.filter((asset: any) => chunk.files.indexOf(asset.name) != -1);
+      const summedSize = assets.filter((asset: any) => !asset.name.endsWith(".map")).reduce((total: number, asset: any) => { return total + asset.size }, 0);
+      return generateBundleStats({ ...chunk, size: summedSize }, colors);
     });
 
   const unchangedChunkNumber = json.chunks.length - changedChunksStats.length;
@@ -84,12 +86,20 @@ export function statsToString(json: any, statsConfig: any) {
   }
 }
 
+// TODO(#16193): Don't emit this warning in the first place rather than just suppressing it.
+const ERRONEOUS_WARNINGS = [
+  /multiple assets emit different content.*3rdpartylicenses\.txt/i,
+];
 export function statsWarningsToString(json: any, statsConfig: any) {
   const colors = statsConfig.colors;
   const rs = (x: string) => colors ? reset(x) : x;
   const y = (x: string) => colors ? bold(yellow(x)) : x;
 
-  return rs('\n' + json.warnings.map((warning: any) => y(`WARNING in ${warning}`)).join('\n\n'));
+  return rs('\n' + json.warnings
+      .map((warning: any) => `${warning}`)
+      .filter((warning: string) => !ERRONEOUS_WARNINGS.some((erroneous) => erroneous.test(warning)))
+      .map((warning: string) => y(`WARNING in ${warning}`))
+      .join('\n\n'));
 }
 
 export function statsErrorsToString(json: any, statsConfig: any) {

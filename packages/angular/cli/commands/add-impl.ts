@@ -18,7 +18,6 @@ import { colors } from '../utilities/color';
 import { getPackageManager } from '../utilities/package-manager';
 import {
   NgAddSaveDepedency,
-  PackageIdentifier,
   PackageManifest,
   fetchPackageManifest,
   fetchPackageMetadata,
@@ -29,7 +28,14 @@ const npa = require('npm-package-arg');
 
 export class AddCommand extends SchematicCommand<AddCommandSchema> {
   readonly allowPrivateSchematics = true;
-  readonly allowAdditionalArgs = true;
+
+  async initialize(options: AddCommandSchema & Arguments) {
+    if (options.registry) {
+      return super.initialize({ ...options, packageRegistry: options.registry });
+    } else {
+      return super.initialize(options);
+    }
+  }
 
   async run(options: AddCommandSchema & Arguments) {
     if (!options.collection) {
@@ -158,7 +164,12 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
     if (savePackage === false) {
       // Temporary packages are located in a different directory
       // Hence we need to resolve them using the temp path
-      const tempPath = installTempPackage(packageIdentifier.raw, this.logger, packageManager);
+      const tempPath = installTempPackage(
+        packageIdentifier.raw,
+        this.logger,
+        packageManager,
+        options.registry ? [`--registry="${options.registry}"`] : undefined,
+      );
       const resolvedCollectionPath = require.resolve(
         join(collectionName, 'package.json'),
         {
@@ -168,7 +179,13 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
 
       collectionName = dirname(resolvedCollectionPath);
     } else {
-      installPackage(packageIdentifier.raw, this.logger, packageManager, savePackage);
+      installPackage(
+        packageIdentifier.raw,
+        this.logger,
+        packageManager,
+        savePackage,
+        options.registry ? [`--registry="${options.registry}"`] : undefined,
+      );
     }
 
     return this.executeSchematic(collectionName, options['--']);

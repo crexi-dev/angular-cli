@@ -8,13 +8,15 @@
 import { BuilderContext, createBuilder } from '@angular-devkit/architect';
 import { getSystemPath, json, normalize, resolve } from '@angular-devkit/core';
 import * as net from 'net';
-import { Observable, from, of } from 'rxjs';
+import { Observable, from, isObservable, of } from 'rxjs';
 import { switchMap } from 'rxjs/operators';
 import * as webpack from 'webpack';
 import * as WebpackDevServer from 'webpack-dev-server';
 import { getEmittedFiles } from '../utils';
 import { BuildResult, WebpackFactory, WebpackLoggingCallback } from '../webpack';
 import { Schema as WebpackDevServerBuilderSchema } from './schema';
+
+export type WebpackDevServerFactory = typeof WebpackDevServer;
 
 export type DevServerBuildOutput = BuildResult & {
   port: number;
@@ -29,9 +31,33 @@ export function runWebpackDevServer(
     devServerConfig?: WebpackDevServer.Configuration,
     logging?: WebpackLoggingCallback,
     webpackFactory?: WebpackFactory,
+    webpackDevServerFactory?: WebpackDevServerFactory,
   } = {},
 ): Observable<DevServerBuildOutput> {
-  const createWebpack = options.webpackFactory || (config => of(webpack(config)));
+  const createWebpack = (c: webpack.Configuration) => {
+    if (options.webpackFactory) {
+      const result = options.webpackFactory(c);
+      if (isObservable(result)) {
+        return result;
+      } else {
+        return of(result);
+      }
+    } else {
+      return of(webpack(c));
+    }
+  };
+
+  const createWebpackDevServer = (
+    webpack: webpack.Compiler | webpack.MultiCompiler,
+    config: WebpackDevServer.Configuration,
+  ) => {
+    if (options.webpackDevServerFactory) {
+      return new options.webpackDevServerFactory(webpack, config);
+    }
+
+    return new WebpackDevServer(webpack, config);
+  };
+
   const log: WebpackLoggingCallback = options.logging
     || ((stats, config) => context.logger.info(stats.toString(config.stats)));
 
@@ -44,7 +70,7 @@ export function runWebpackDevServer(
 
   return createWebpack(config).pipe(
     switchMap(webpackCompiler => new Observable<DevServerBuildOutput>(obs => {
-      const server = new WebpackDevServer(webpackCompiler, devServerConfig);
+      const server = createWebpackDevServer(webpackCompiler, devServerConfig);
       let result: DevServerBuildOutput;
 
       webpackCompiler.hooks.done.tap('build-webpack', (stats) => {

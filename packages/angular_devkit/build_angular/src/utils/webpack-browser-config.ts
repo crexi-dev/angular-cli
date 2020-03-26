@@ -145,14 +145,47 @@ export async function generateI18nBrowserWebpackConfigFromContext(
   const config = result.config;
 
   if (i18n.shouldInline) {
-    // Remove localize "polyfill"
-    if (!config.resolve) {
-      config.resolve = {};
+    // Remove localize "polyfill" if in AOT mode
+    if (buildOptions.aot) {
+      if (!config.resolve) {
+        config.resolve = {};
+      }
+      if (!config.resolve.alias) {
+        config.resolve.alias = {};
+      }
+      config.resolve.alias['@angular/localize/init'] = require.resolve('./empty.js');
     }
-    if (!config.resolve.alias) {
-      config.resolve.alias = {};
+
+    // Update file hashes to include translation file content
+    const i18nHash = Object.values(i18n.locales).reduce(
+      (data, locale) => data + (locale.integrity || ''),
+      '',
+    );
+    if (!config.plugins) {
+      config.plugins = [];
     }
-    config.resolve.alias['@angular/localize/init'] = require.resolve('./empty.js');
+    config.plugins.push({
+      apply(compiler) {
+        compiler.hooks.compilation.tap('build-angular', compilation => {
+          // Webpack typings do not contain template hashForChunk hook
+          // tslint:disable-next-line: no-any
+          (compilation.mainTemplate.hooks as any).hashForChunk.tap(
+            'build-angular',
+            (hash: { update(data: string): void }) => {
+              hash.update('$localize' + i18nHash);
+            },
+          );
+          // Webpack typings do not contain hooks property
+          // tslint:disable-next-line: no-any
+          (compilation.chunkTemplate as any).hooks.hashForChunk.tap(
+            'build-angular',
+            (hash: { update(data: string): void }) => {
+              hash.update('$localize' + i18nHash);
+            },
+          );
+        });
+      },
+    });
   }
 
   return { ...result, i18n };

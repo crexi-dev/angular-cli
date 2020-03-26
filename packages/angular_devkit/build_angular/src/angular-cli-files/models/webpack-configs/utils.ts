@@ -76,8 +76,8 @@ export function normalizeExtraEntryPoints(
 }
 
 export function getSourceMapDevTool(
-  scriptsSourceMap: boolean,
-  stylesSourceMap: boolean,
+  scriptsSourceMap: boolean | undefined,
+  stylesSourceMap: boolean | undefined,
   hiddenSourceMap = false,
   inlineSourceMap = false,
 ): SourceMapDevToolPlugin {
@@ -110,9 +110,15 @@ export function getEsVersionForFileName(
   scriptTargetOverride: ScriptTarget | undefined,
   esVersionInFileName = false,
 ): string {
-  return scriptTargetOverride && esVersionInFileName
-    ? '-' + ScriptTarget[scriptTargetOverride].toLowerCase()
-    : '';
+  if (!esVersionInFileName || scriptTargetOverride === undefined) {
+    return '';
+  }
+
+  if (scriptTargetOverride === ScriptTarget.ESNext) {
+    return '-esnext';
+  }
+
+  return '-' + ScriptTarget[scriptTargetOverride].toLowerCase();
 }
 
 export function isPolyfillsEntry(name: string) {

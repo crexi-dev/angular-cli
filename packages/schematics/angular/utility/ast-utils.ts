@@ -575,6 +575,50 @@ export function isImported(source: ts.SourceFile,
 }
 
 /**
+ * This function returns the name of the environment export
+ * whether this export is aliased or not. If the environment file
+ * is not imported, then it will return `null`.
+ */
+export function getEnvironmentExportName(source: ts.SourceFile): string | null {
+  // Initial value is `null` as we don't know yet if the user
+  // has imported `environment` into the root module or not.
+  let environmentExportName: string | null = null;
+
+  const allNodes = getSourceNodes(source);
+
+  allNodes
+    .filter(node => node.kind === ts.SyntaxKind.ImportDeclaration)
+    .filter(
+      (declaration: ts.ImportDeclaration) =>
+        declaration.moduleSpecifier.kind === ts.SyntaxKind.StringLiteral &&
+        declaration.importClause !== undefined,
+    )
+    .map((declaration: ts.ImportDeclaration) =>
+      // If `importClause` property is defined then the first
+      // child will be `NamedImports` object (or `namedBindings`).
+      (declaration.importClause as ts.ImportClause).getChildAt(0),
+    )
+    // Find those `NamedImports` object that contains `environment` keyword
+    // in its text. E.g. `{ environment as env }`.
+    .filter((namedImports: ts.NamedImports) => namedImports.getText().includes('environment'))
+    .forEach((namedImports: ts.NamedImports) => {
+      for (const specifier of namedImports.elements) {
+        // `propertyName` is defined if the specifier
+        // has an aliased import.
+        const name = specifier.propertyName || specifier.name;
+
+        // Find specifier that contains `environment` keyword in its text.
+        // Whether it's `environment` or `environment as env`.
+        if (name.text.includes('environment')) {
+          environmentExportName = specifier.name.text;
+        }
+      }
+    });
+
+  return environmentExportName;
+}
+
+/**
  * Returns the RouterModule declaration from NgModule metadata, if any.
  */
 export function getRouterModuleDeclaration(source: ts.SourceFile): ts.Expression | undefined {
@@ -649,20 +693,38 @@ export function addRouteDeclarationToModule(
     routesArr = findNodes(routesVar, ts.SyntaxKind.ArrayLiteralExpression, 1)[0] as ts.ArrayLiteralExpression;
   }
 
-  const occurencesCount = routesArr.elements.length;
+  const occurrencesCount = routesArr.elements.length;
   const text = routesArr.getFullText(source);
 
   let route: string = routeLiteral;
-  if (occurencesCount > 0) {
-    const identation = text.match(/\r?\n(\r?)\s*/) || [];
-    route = `,${identation[0] || ' '}${routeLiteral}`;
+  let insertPos = routesArr.elements.pos;
+
+  if (occurrencesCount > 0) {
+    const lastRouteLiteral = [...routesArr.elements].pop() as ts.Expression;
+    const lastRouteIsWildcard = ts.isObjectLiteralExpression(lastRouteLiteral)
+      && lastRouteLiteral
+        .properties
+        .some(n => (
+          ts.isPropertyAssignment(n)
+          && ts.isIdentifier(n.name)
+          && n.name.text === 'path'
+          && ts.isStringLiteral(n.initializer)
+          && n.initializer.text === '**'
+        ));
+
+    const indentation = text.match(/\r?\n(\r?)\s*/) || [];
+    const routeText = `${indentation[0] || ' '}${routeLiteral}`;
+
+    // Add the new route before the wildcard route
+    // otherwise we'll always redirect to the wildcard route
+    if (lastRouteIsWildcard) {
+      insertPos = lastRouteLiteral.pos;
+      route = `${routeText},`;
+    } else {
+      insertPos = lastRouteLiteral.end;
+      route = `,${routeText}`;
+    }
   }
 
-  return insertAfterLastOccurrence(
-    routesArr.elements as unknown as ts.Node[],
-    route,
-    fileToAdd,
-    routesArr.elements.pos,
-    ts.SyntaxKind.ObjectLiteralExpression,
-  );
+  return new InsertChange(fileToAdd, insertPos, route);
 }

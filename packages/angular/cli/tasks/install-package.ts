@@ -8,7 +8,7 @@
 
 import { logging } from '@angular-devkit/core';
 import { spawnSync } from 'child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import * as rimraf from 'rimraf';
@@ -68,6 +68,7 @@ export function installTempPackage(
   packageName: string,
   logger: logging.Logger,
   packageManager: PackageManager = PackageManager.Npm,
+  extraArgs?: string[],
 ): string {
   const tempPath = mkdtempSync(join(realpathSync(tmpdir()), 'angular-cli-packages-'));
 
@@ -78,13 +79,30 @@ export function installTempPackage(
     } catch { }
   });
 
+  // NPM will warn when a `package.json` is not found in the install directory
+  // Example:
+  // npm WARN enoent ENOENT: no such file or directory, open '/tmp/.ng-temp-packages-84Qi7y/package.json'
+  // npm WARN .ng-temp-packages-84Qi7y No description
+  // npm WARN .ng-temp-packages-84Qi7y No repository field.
+  // npm WARN .ng-temp-packages-84Qi7y No license field.
+
+  // While we can use `npm init -y` we will end up needing to update the 'package.json' anyways
+  // because of missing fields.
+  writeFileSync(join(tempPath, 'package.json'), JSON.stringify({
+    name: 'temp-cli-install',
+    description: 'temp-cli-install',
+    repository: 'temp-cli-install',
+    license: 'MIT',
+  }));
+
   // setup prefix/global modules path
   const packageManagerArgs = getPackageManagerArguments(packageManager);
   const tempNodeModules = join(tempPath, 'node_modules');
+  // Yarn will not append 'node_modules' to the path
+  const prefixPath = packageManager === PackageManager.Yarn ? tempNodeModules : tempPath;
   const installArgs: string[] = [
-    packageManagerArgs.prefix,
-    // Yarn will no append 'node_modules' to the path
-    packageManager === PackageManager.Yarn ? tempNodeModules : tempPath,
+    ...(extraArgs || []),
+    `${packageManagerArgs.prefix}="${prefixPath}"`,
     packageManagerArgs.noLockfile,
   ];
 

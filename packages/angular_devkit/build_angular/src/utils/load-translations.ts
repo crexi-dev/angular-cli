@@ -5,6 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 
 export type TranslationLoader = (
@@ -14,6 +15,7 @@ export type TranslationLoader = (
   format: string;
   // tslint:disable-next-line: no-implicit-dependencies
   diagnostics: import('@angular/localize/src/tools/src/diagnostics').Diagnostics;
+  integrity: string;
 };
 
 export async function createTranslationLoader(): Promise<TranslationLoader> {
@@ -25,8 +27,9 @@ export async function createTranslationLoader(): Promise<TranslationLoader> {
     for (const [format, parser] of Object.entries(parsers)) {
       if (parser.canParse(path, content)) {
         const result = parser.parse(path, content);
+        const integrity = 'sha256-' + createHash('sha256').update(content).digest('base64');
 
-        return { format, translation: result.translations, diagnostics };
+        return { format, translation: result.translations, diagnostics, integrity };
       }
     }
 
@@ -57,7 +60,7 @@ async function importParsers() {
       xmb: new (await import(
         // tslint:disable-next-line:trailing-comma no-implicit-dependencies
         '@angular/localize/src/tools/src/translate/translation_files/translation_parsers/xtb_translation_parser'
-      )).XtbTranslationParser(diagnostics),
+      )).XtbTranslationParser(),
     };
 
     return { parsers, diagnostics };

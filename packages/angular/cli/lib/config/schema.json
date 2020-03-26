@@ -86,6 +86,12 @@
               "default": "Default",
               "alias": "c"
             },
+            "displayBlock": {
+              "description": "Specifies if the style will contain `:host { display: block; }`.",
+              "type": "boolean",
+              "default": false,
+              "alias": "b"
+            },
             "entryComponent": {
               "type": "boolean",
               "default": false,
@@ -151,6 +157,11 @@
               "enum": ["Emulated", "Native", "None", "ShadowDom"],
               "type": "string",
               "alias": "v"
+            },
+            "skipTests": {
+              "type": "boolean",
+              "description": "When true, does not create test files.",
+              "default": false
             }
           }
         },
@@ -376,17 +387,58 @@
           "type": "object",
           "properties": {
             "sourceLocale": {
-              "type": "string",
-              "description": "Specifies the source language of the application.",
-              "default": "en-US"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Specifies the source locale of the application.",
+                  "default": "en-US",
+                  "$comment": "IETF BCP 47 language tag (simplified)",
+                  "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z]{4})?(-([a-zA-Z]{2}|[0-9]{3}))?(-[a-zA-Z]{5,8})?(-x(-[a-zA-Z0-9]{1,8})+)?$"
+                },
+                {
+                  "type": "object",
+                  "description": "Localization options to use for the source locale",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "description": "Specifies the locale code of the source locale",
+                      "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z]{4})?(-([a-zA-Z]{2}|[0-9]{3}))?(-[a-zA-Z]{5,8})?(-x(-[a-zA-Z0-9]{1,8})+)?$"
+                    },
+                    "baseHref": {
+                      "type": "string",
+                      "description": "HTML base HREF to use for the locale (defaults to the locale code)"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
             },
             "locales": {
               "type": "object",
               "additionalProperties": false,
               "patternProperties": {
-                "^[a-z]{2}(-[a-zA-Z]{2,})?$": {
-                  "type": "string",
-                  "description": "Localization file to use for i18n"
+                "^[a-zA-Z]{2,3}(-[a-zA-Z]{4})?(-([a-zA-Z]{2}|[0-9]{3}))?(-[a-zA-Z]{5,8})?(-x(-[a-zA-Z0-9]{1,8})+)?$": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "description": "Localization file to use for i18n"
+                    },
+                    {
+                      "type": "object",
+                      "description": "Localization options to use for the locale",
+                      "properties": {
+                        "translation": {
+                          "type": "string",
+                          "description": "Localization file to use for i18n"
+                        },
+                        "baseHref": {
+                          "type": "string",
+                          "description": "HTML base HREF to use for the locale (defaults to the locale code)"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               }
             }
@@ -804,8 +856,7 @@
             },
             "preserveSymlinks": {
               "type": "boolean",
-              "description": "Do not use the real path when resolving modules.",
-              "default": false
+              "description": "Do not use the real path when resolving modules."
             },
             "extractLicenses": {
               "type": "boolean",
@@ -923,6 +974,13 @@
                 "anonymous",
                 "use-credentials"
               ]
+            },
+            "allowedCommonJsDependencies": {
+              "description": "A list of CommonJS packages that are allowed to be used without a built time warning.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "additionalProperties": false,
@@ -1438,8 +1496,7 @@
             },
             "preserveSymlinks": {
               "type": "boolean",
-              "description": "Do not use the real path when resolving modules.",
-              "default": false
+              "description": "Do not use the real path when resolving modules."
             },
             "browsers": {
               "type": "string",
@@ -1599,6 +1656,15 @@
             "devServerTarget": {
               "type": "string",
               "description": "Dev server target to run tests against."
+            },
+            "grep": {
+              "type": "string",
+              "description": "Execute specs whose names match the pattern, which is internally compiled to a RegExp."
+            },
+            "invertGrep": {
+              "type": "boolean",
+              "description": "Invert the selection specified by the 'grep' option.",
+              "default": false
             },
             "specs": {
               "type": "array",
@@ -1815,8 +1881,7 @@
             },
             "preserveSymlinks": {
               "type": "boolean",
-              "description": "Do not use the real path when resolving modules.",
-              "default": false
+              "description": "Do not use the real path when resolving modules."
             },
             "extractLicenses": {
               "type": "boolean",
@@ -1834,13 +1899,28 @@
               "default": true
             },
             "bundleDependencies": {
-              "type": "string",
-              "description": "Available on server platform only. Which external dependencies to bundle into the module. By default, all of node_modules will be kept as requires.",
-              "default": "none",
-              "enum": [
-                "none",
-                "all"
+              "description": "Available on server platform only. Which external dependencies to bundle into the module. By default, all of node_modules will be bundled.",
+              "default": true,
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "all"
+                  ]
+                }
               ]
+            },
+            "externalDependencies": {
+              "description": "Exclude the listed external dependencies from being bundled into the bundle. Instead, the created bundle relies on these dependencies to be available during runtime.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
             },
             "statsJson": {
               "type": "boolean",
@@ -1944,7 +2024,7 @@
             "format": {
               "type": "string",
               "description": "Output format (prose, json, stylish, verbose, pmd, msbuild, checkstyle, vso, fileslist, codeFrame).",
-              "default": "prose",
+              "default": "stylish",
               "anyOf": [
                 {
                   "enum": [
@@ -2005,7 +2085,7 @@
             "minItems": 1,
             "items": {
               "type": "string",
-              "pattern": "^[a-z]{2}(-[a-zA-Z]{2,})?$"
+              "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z]{4})?(-([a-zA-Z]{2}|[0-9]{3}))?(-[a-zA-Z]{5,8})?(-x(-[a-zA-Z0-9]{1,8})+)?$"
             }
           }
         ]

@@ -7,7 +7,7 @@
  */
 import { BuilderContext, BuilderOutput, createBuilder } from '@angular-devkit/architect';
 import { runWebpack } from '@angular-devkit/build-webpack';
-import { json } from '@angular-devkit/core';
+import { json, tags } from '@angular-devkit/core';
 import * as path from 'path';
 import { Observable, from } from 'rxjs';
 import { concatMap, map } from 'rxjs/operators';
@@ -57,11 +57,34 @@ export function execute(
   const tsConfig = readTsconfig(options.tsConfig, root);
   const target = tsConfig.options.target || ScriptTarget.ES5;
   const baseOutputPath = path.resolve(root, options.outputPath);
-  let outputPaths: undefined | string[];
+  let outputPaths: undefined | Map<string, string>;
+
+  if (typeof options.bundleDependencies === 'string') {
+    options.bundleDependencies = options.bundleDependencies === 'all';
+    context.logger.warn(`Option 'bundleDependencies' string value is deprecated since version 9. Use a boolean value instead.`);
+  }
+
+  if (!options.bundleDependencies && tsConfig.options.enableIvy) {
+    // tslint:disable-next-line: no-implicit-dependencies
+    const { __processed_by_ivy_ngcc__, main = '' } = require('@angular/core/package.json');
+    if (
+      !__processed_by_ivy_ngcc__ ||
+      !__processed_by_ivy_ngcc__.main ||
+      (main as string).includes('__ivy_ngcc__')
+    ) {
+      context.logger.warn(tags.stripIndent`
+      WARNING: Turning off 'bundleDependencies' with Ivy may result in undefined behaviour
+      unless 'node_modules' are transformed using the standalone Angular compatibility compiler (NGCC).
+      See: http://v9.angular.io/guide/ivy#ivy-and-universal-app-shell
+    `);
+    }
+  }
 
   return from(initialize(options, context, transforms.webpackConfiguration)).pipe(
     concatMap(({ config, i18n }) => {
-      return runWebpack(config, context).pipe(
+      return runWebpack(config, context, {
+        webpackFactory: require('webpack') as typeof webpack,
+      }).pipe(
         concatMap(async output => {
           const { emittedFiles = [], webpackStats } = output;
           if (!output.success || !i18n.shouldInline) {
@@ -79,7 +102,7 @@ export function execute(
             emittedFiles,
             i18n,
             baseOutputPath,
-            outputPaths,
+            Array.from(outputPaths.values()),
             [],
             // tslint:disable-next-line: no-non-null-assertion
             webpackStats.outputPath!,

@@ -7,6 +7,7 @@
  */
 import { LicenseWebpackPlugin } from 'license-webpack-plugin';
 import * as webpack from 'webpack';
+import { CommonJsUsageWarnPlugin } from '../../plugins/webpack';
 import { WebpackConfigOptions } from '../build-options';
 import { getSourceMapDevTool, isPolyfillsEntry, normalizeExtraEntryPoints } from './utils';
 
@@ -15,10 +16,22 @@ const SubresourceIntegrityPlugin = require('webpack-subresource-integrity');
 
 export function getBrowserConfig(wco: WebpackConfigOptions): webpack.Configuration {
   const { buildOptions } = wco;
+  const {
+    crossOrigin = 'none',
+    subresourceIntegrity,
+    evalSourceMap,
+    extractLicenses,
+    vendorChunk,
+    commonChunk,
+    styles,
+    allowedCommonJsDependencies,
+    optimization,
+  } = buildOptions;
+
   const extraPlugins = [];
 
   let isEval = false;
-  const { styles: stylesOptimization, scripts: scriptsOptimization } = buildOptions.optimization;
+  const { styles: stylesOptimization, scripts: scriptsOptimization } = optimization;
   const {
     styles: stylesSourceMap,
     scripts: scriptsSourceMap,
@@ -27,40 +40,47 @@ export function getBrowserConfig(wco: WebpackConfigOptions): webpack.Configurati
 
   // See https://webpack.js.org/configuration/devtool/ for sourcemap types.
   if ((stylesSourceMap || scriptsSourceMap) &&
-    buildOptions.evalSourceMap &&
+    evalSourceMap &&
     !stylesOptimization &&
     !scriptsOptimization) {
     // Produce eval sourcemaps for development with serve, which are faster.
     isEval = true;
   }
 
-  if (buildOptions.subresourceIntegrity) {
+  if (subresourceIntegrity) {
     extraPlugins.push(new SubresourceIntegrityPlugin({
       hashFuncNames: ['sha384'],
     }));
   }
 
-  if (buildOptions.extractLicenses) {
+  if (extractLicenses) {
     extraPlugins.push(new LicenseWebpackPlugin({
       stats: {
         warnings: false,
         errors: false,
       },
       perChunkOutput: false,
-      outputFilename: `3rdpartylicenses.txt`,
+      outputFilename: '3rdpartylicenses.txt',
     }));
   }
 
   if (!isEval && (scriptsSourceMap || stylesSourceMap)) {
     extraPlugins.push(getSourceMapDevTool(
-      !!scriptsSourceMap,
-      !!stylesSourceMap,
+      scriptsSourceMap,
+      stylesSourceMap,
       wco.differentialLoadingMode ? true : hiddenSourceMap,
     ));
   }
 
-  const globalStylesBundleNames = normalizeExtraEntryPoints(buildOptions.styles, 'styles')
+  const globalStylesBundleNames = normalizeExtraEntryPoints(styles, 'styles')
     .map(style => style.bundleName);
+
+  let crossOriginLoading: string | false = false;
+  if (subresourceIntegrity && crossOrigin === 'none') {
+    crossOriginLoading = 'anonymous';
+  } else if (crossOrigin !== 'none') {
+    crossOriginLoading = crossOrigin;
+  }
 
   return {
     devtool: isEval ? 'eval' : false,
@@ -71,19 +91,19 @@ export function getBrowserConfig(wco: WebpackConfigOptions): webpack.Configurati
       ],
     },
     output: {
-      crossOriginLoading: buildOptions.subresourceIntegrity ? 'anonymous' : false,
+      crossOriginLoading,
     },
     optimization: {
       runtimeChunk: 'single',
       splitChunks: {
         maxAsyncRequests: Infinity,
         cacheGroups: {
-          default: !!buildOptions.commonChunk && {
+          default: !!commonChunk && {
             chunks: 'async',
             minChunks: 2,
             priority: 10,
           },
-          common: !!buildOptions.commonChunk && {
+          common: !!commonChunk && {
             name: 'common',
             chunks: 'async',
             minChunks: 2,
@@ -91,7 +111,7 @@ export function getBrowserConfig(wco: WebpackConfigOptions): webpack.Configurati
             priority: 5,
           },
           vendors: false,
-          vendor: !!buildOptions.vendorChunk && {
+          vendor: !!vendorChunk && {
             name: 'vendor',
             chunks: 'initial',
             enforce: true,
@@ -106,7 +126,12 @@ export function getBrowserConfig(wco: WebpackConfigOptions): webpack.Configurati
         },
       },
     },
-    plugins: extraPlugins,
+    plugins: [
+      new CommonJsUsageWarnPlugin({
+        allowedDepedencies: allowedCommonJsDependencies,
+      }),
+      ...extraPlugins,
+    ],
     node: false,
   };
 }

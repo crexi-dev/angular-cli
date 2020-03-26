@@ -11,7 +11,7 @@ import { join, json, logging, normalize, tags, virtualFs } from '@angular-devkit
 import { NodeJsSyncHost } from '@angular-devkit/core/node';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Observable, from, of } from 'rxjs';
+import { Observable, from } from 'rxjs';
 import { concatMap, map, switchMap } from 'rxjs/operators';
 import { ScriptTarget } from 'typescript';
 import * as webpack from 'webpack';
@@ -27,6 +27,8 @@ import {
   getWorkerConfig,
   normalizeExtraEntryPoints,
 } from '../angular-cli-files/models/webpack-configs';
+import { markAsyncChunksNonInitial } from '../angular-cli-files/utilities/async-chunks';
+import { ThresholdSeverity, checkBudgets } from '../angular-cli-files/utilities/bundle-calculator';
 import {
   IndexHtmlTransform,
   writeIndexHtml,
@@ -47,6 +49,7 @@ import {
   normalizeAssetPatterns,
   normalizeOptimization,
   normalizeSourceMaps,
+  urlJoin,
 } from '../utils';
 import { BundleActionExecutor } from '../utils/action-executor';
 import { findCachePath } from '../utils/cache-path';
@@ -230,7 +233,7 @@ export function buildWebpackBrowser(
   const host = new NodeJsSyncHost();
   const root = normalize(context.workspaceRoot);
   const baseOutputPath = path.resolve(context.workspaceRoot, options.outputPath);
-  let outputPaths: undefined | string[];
+  let outputPaths: undefined | Map<string, string>;
 
   // Check Angular version.
   assertCompatibleAngularVersion(context.workspaceRoot, context.logger);
@@ -241,7 +244,6 @@ export function buildWebpackBrowser(
       const tsConfig = readTsconfig(options.tsConfig, context.workspaceRoot);
       const target = tsConfig.options.target || ScriptTarget.ES5;
       const buildBrowserFeatures = new BuildBrowserFeatures(projectRoot, target);
-
       const isDifferentialLoadingNeeded = buildBrowserFeatures.isDifferentialLoadingNeeded();
 
       if (target > ScriptTarget.ES2015 && isDifferentialLoadingNeeded) {
@@ -256,6 +258,7 @@ export function buildWebpackBrowser(
       const startTime = Date.now();
 
       return runWebpack(config, context, {
+        webpackFactory: require('webpack') as typeof webpack,
         logging:
           transforms.logging ||
           (useBundleDownleveling
@@ -264,10 +267,18 @@ export function buildWebpackBrowser(
       }).pipe(
         // tslint:disable-next-line: no-big-function
         concatMap(async buildEvent => {
-          const { webpackStats, success, emittedFiles = [] } = buildEvent;
-          if (!webpackStats) {
+          const { webpackStats: webpackRawStats, success, emittedFiles = [] } = buildEvent;
+          if (!webpackRawStats) {
             throw new Error('Webpack stats build result is required.');
           }
+
+          // Fix incorrectly set `initial` value on chunks.
+          const extraEntryPoints = normalizeExtraEntryPoints(options.styles || [], 'styles')
+              .concat(normalizeExtraEntryPoints(options.scripts || [], 'scripts'));
+          const webpackStats = {
+            ...webpackRawStats,
+            chunks: markAsyncChunksNonInitial(webpackRawStats, extraEntryPoints),
+          };
 
           if (!success && useBundleDownleveling) {
             // If using bundle downleveling then there is only one build
@@ -303,7 +314,7 @@ export function buildWebpackBrowser(
                   emittedFiles,
                   i18n,
                   baseOutputPath,
-                  outputPaths,
+                  Array.from(outputPaths.values()),
                   scriptsEntryPointName,
                   // tslint:disable-next-line: no-non-null-assertion
                   webpackStats.outputPath!,
@@ -330,11 +341,23 @@ export function buildWebpackBrowser(
 
               let mainChunkId;
               const actions: ProcessBundleOptions[] = [];
+              let workerReplacements: [string, string][] | undefined;
               const seen = new Set<string>();
               for (const file of emittedFiles) {
                 // Assets are not processed nor injected into the index
                 if (file.asset) {
-                  continue;
+                  // WorkerPlugin adds worker files to assets
+                  if (file.file.endsWith('.worker.js')) {
+                    if (!workerReplacements) {
+                      workerReplacements = [];
+                    }
+                    workerReplacements.push([
+                      file.file,
+                      file.file.replace(/\-(es20\d{2}|esnext)/, '-es5'),
+                    ]);
+                  } else {
+                    continue;
+                  }
                 }
 
                 // Scripts and non-javascript files are not processed
@@ -361,17 +384,9 @@ export function buildWebpackBrowser(
                 }
 
                 // All files at this point except ES5 polyfills are module scripts
-                const es5Polyfills =
-                  file.file.startsWith('polyfills-es5') ||
-                  file.file.startsWith('polyfills-nomodule-es5');
+                const es5Polyfills = file.file.startsWith('polyfills-es5');
                 if (!es5Polyfills) {
                   moduleFiles.push(file);
-                }
-                // If not optimizing then ES2015 polyfills do not need processing
-                // Unlike other module scripts, it is never downleveled
-                const es2015Polyfills = file.file.startsWith('polyfills-es2015');
-                if (!actionOptions.optimize && es2015Polyfills) {
-                  continue;
                 }
 
                 // Retrieve the content/map for the file
@@ -391,8 +406,10 @@ export function buildWebpackBrowser(
 
                 if (es5Polyfills) {
                   fs.unlinkSync(filename);
-                  filename = filename.replace('-es2015', '');
+                  filename = filename.replace(/\-es20\d{2}/, '');
                 }
+
+                const es2015Polyfills = file.file.startsWith('polyfills-es20');
 
                 // Record the bundle processing action
                 // The runtime chunk gets special processing for lazy loaded files
@@ -416,8 +433,8 @@ export function buildWebpackBrowser(
 
                 // Add the newly created ES5 bundles to the index as nomodule scripts
                 const newFilename = es5Polyfills
-                  ? file.file.replace('-es2015', '')
-                  : file.file.replace('es2015', 'es5');
+                  ? file.file.replace(/\-es20\d{2}/, '')
+                  : file.file.replace(/\-(es20\d{2}|esnext)/, '-es5');
                 noModuleFiles.push({ ...file, file: newFilename });
               }
 
@@ -430,7 +447,7 @@ export function buildWebpackBrowser(
                 if (action.integrityAlgorithm && action.runtime) {
                   processRuntimeAction = action;
                 } else {
-                  processActions.push(action);
+                  processActions.push({ replacements: workerReplacements, ...action });
                 }
               }
 
@@ -452,6 +469,7 @@ export function buildWebpackBrowser(
                   const runtimeOptions = {
                     ...processRuntimeAction,
                     runtimeData: processResults,
+                    supportedBrowsers: buildBrowserFeatures.supportedBrowsers,
                   };
                   processResults.push(
                     await import('../utils/process-bundle').then(m => m.process(runtimeOptions)),
@@ -528,7 +546,7 @@ export function buildWebpackBrowser(
                           ),
                         },
                       ],
-                      outputPaths,
+                      Array.from(outputPaths.values()),
                       '',
                     );
                   } catch (err) {
@@ -546,7 +564,7 @@ export function buildWebpackBrowser(
                   }
                 }
               } finally {
-                executor.stop();
+                await executor.stop();
               }
 
               // Copy assets
@@ -560,7 +578,7 @@ export function buildWebpackBrowser(
                       normalize(projectRoot),
                       projectSourceRoot === undefined ? undefined : normalize(projectSourceRoot),
                     ),
-                    outputPaths,
+                    Array.from(outputPaths.values()),
                     context.workspaceRoot,
                   );
                 } catch (err) {
@@ -591,35 +609,30 @@ export function buildWebpackBrowser(
               }
 
               let bundleInfoText = '';
-              const processedNames = new Set<string>();
               for (const result of processResults) {
-                processedNames.add(result.name);
+                const chunk = webpackStats.chunks
+                    && webpackStats.chunks.find((chunk) => chunk.id.toString() === result.name);
 
-                const chunk =
-                  webpackStats &&
-                  webpackStats.chunks &&
-                  webpackStats.chunks.find(c => result.name === c.id.toString());
                 if (result.original) {
                   bundleInfoText +=
                     '\n' + generateBundleInfoStats(result.name, result.original, chunk);
                 }
+
                 if (result.downlevel) {
                   bundleInfoText +=
                     '\n' + generateBundleInfoStats(result.name, result.downlevel, chunk);
                 }
               }
 
-              if (webpackStats && webpackStats.chunks) {
-                for (const chunk of webpackStats.chunks) {
-                  if (processedNames.has(chunk.id.toString())) {
-                    continue;
-                  }
-
-                  const asset =
+              const unprocessedChunks = webpackStats.chunks && webpackStats.chunks
+                  .filter((chunk) => !processResults
+                      .find((result) => chunk.id.toString() === result.name),
+                  ) || [];
+              for (const chunk of unprocessedChunks) {
+                const asset =
                     webpackStats.assets && webpackStats.assets.find(a => a.name === chunk.files[0]);
-                  bundleInfoText +=
-                    '\n' + generateBundleStats({ ...chunk, size: asset && asset.size }, true);
-                }
+                bundleInfoText +=
+                  '\n' + generateBundleStats({ ...chunk, size: asset && asset.size }, true);
               }
 
               bundleInfoText +=
@@ -630,11 +643,32 @@ export function buildWebpackBrowser(
                   true,
                 );
               context.logger.info(bundleInfoText);
+
+              // Check for budget errors and display them to the user.
+              const budgets = options.budgets || [];
+              const budgetFailures = checkBudgets(budgets, webpackStats, processResults);
+              for (const {severity, message} of budgetFailures) {
+                const msg = `budgets: ${message}`;
+                switch (severity) {
+                  case ThresholdSeverity.Warning:
+                    webpackStats.warnings.push(msg);
+                    break;
+                  case ThresholdSeverity.Error:
+                    webpackStats.errors.push(msg);
+                    break;
+                  default:
+                    assertNever(severity);
+                    break;
+                }
+              }
+
               if (webpackStats && webpackStats.warnings.length > 0) {
                 context.logger.warn(statsWarningsToString(webpackStats, { colors: true }));
               }
               if (webpackStats && webpackStats.errors.length > 0) {
                 context.logger.error(statsErrorsToString(webpackStats, { colors: true }));
+
+                return { success: false };
               }
             } else {
               files = emittedFiles.filter(x => x.name !== 'polyfills-es5');
@@ -645,7 +679,7 @@ export function buildWebpackBrowser(
                   emittedFiles,
                   i18n,
                   baseOutputPath,
-                  outputPaths,
+                  Array.from(outputPaths.values()),
                   scriptsEntryPointName,
                   // tslint:disable-next-line: no-non-null-assertion
                   webpackStats.outputPath!,
@@ -659,7 +693,15 @@ export function buildWebpackBrowser(
             }
 
             if (options.index) {
-              for (const outputPath of outputPaths) {
+              for (const [locale, outputPath] of outputPaths.entries()) {
+                let localeBaseHref;
+                if (i18n.locales[locale] && i18n.locales[locale].baseHref !== '') {
+                  localeBaseHref = urlJoin(
+                    options.baseHref || '',
+                    i18n.locales[locale].baseHref ?? `/${locale}/`,
+                  );
+                }
+
                 try {
                   await generateIndex(
                     outputPath,
@@ -669,6 +711,9 @@ export function buildWebpackBrowser(
                     noModuleFiles,
                     moduleFiles,
                     transforms.indexHtml,
+                    // i18nLocale is used when Ivy is disabled
+                    locale || options.i18nLocale,
+                    localeBaseHref || options.baseHref,
                   );
                 } catch (err) {
                   return { success: false, error: mapErrorToMessage(err) };
@@ -677,14 +722,22 @@ export function buildWebpackBrowser(
             }
 
             if (!options.watch && options.serviceWorker) {
-              for (const outputPath of outputPaths) {
+              for (const [locale, outputPath] of outputPaths.entries()) {
+                let localeBaseHref;
+                if (i18n.locales[locale] && i18n.locales[locale].baseHref !== '') {
+                  localeBaseHref = urlJoin(
+                    options.baseHref || '',
+                    i18n.locales[locale].baseHref ?? `/${locale}/`,
+                  );
+                }
+
                 try {
                   await augmentAppWithServiceWorker(
                     host,
                     root,
                     normalize(projectRoot),
                     normalize(outputPath),
-                    options.baseHref || '/',
+                    localeBaseHref || options.baseHref || '/',
                     options.ngswConfigPath,
                   );
                 } catch (err) {
@@ -702,7 +755,7 @@ export function buildWebpackBrowser(
               ...event,
               baseOutputPath,
               outputPath: baseOutputPath,
-              outputPaths: outputPaths || [baseOutputPath],
+              outputPaths: outputPaths && Array.from(outputPaths.values()) || [baseOutputPath],
             } as BrowserBuilderOutput),
         ),
       );
@@ -718,6 +771,8 @@ function generateIndex(
   noModuleFiles: EmittedFiles[] | undefined,
   moduleFiles: EmittedFiles[] | undefined,
   transformer?: IndexHtmlTransform,
+  locale?: string,
+  baseHref?: string,
 ): Promise<void> {
   const host = new NodeJsSyncHost();
 
@@ -728,14 +783,14 @@ function generateIndex(
     files,
     noModuleFiles,
     moduleFiles,
-    baseHref: options.baseHref,
+    baseHref,
     deployUrl: options.deployUrl,
     sri: options.subresourceIntegrity,
     scripts: options.scripts,
     styles: options.styles,
     postTransform: transformer,
     crossOrigin: options.crossOrigin,
-    lang: options.i18nLocale,
+    lang: locale,
   }).toPromise();
 }
 
@@ -749,6 +804,11 @@ function mapErrorToMessage(error: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function assertNever(input: never): never {
+  throw new Error(`Unexpected call to assertNever() with input: ${
+      JSON.stringify(input, null /* replacer */, 4 /* tabSize */)}`);
 }
 
 export default createBuilder<json.JsonObject & BrowserBuilderSchema>(buildWebpackBrowser);
